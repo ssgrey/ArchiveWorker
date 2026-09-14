@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>档案净页 - 主界面设计稿</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #eef1f3;
+      --panel: #ffffff;
+      --line: #d7dce0;
+      --line-strong: #c5ccd1;
+      --text: #20262b;
+      --muted: #68737c;
+      --accent: #176b63;
+      --accent-soft: #e5f2f0;
+      --danger: #d44747;
+      --protect: #29875c;
+      --review: #d59a24;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #cbd1d5;
+      color: var(--text);
+      font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    body { display: grid; place-items: center; }
+    .app {
+      width: 1920px;
+      height: 1080px;
+      display: grid;
+      grid-template-rows: 44px 62px 1fr 34px;
+      background: var(--bg);
+      box-shadow: 0 16px 50px rgba(25, 34, 39, .24);
+    }
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      color: #f5f7f7;
+      background: #263136;
+      font-size: 13px;
+      user-select: none;
+    }
+    .appmark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #73b9ae;
+      color: #a8ddd5;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .appname { font-weight: 600; font-size: 14px; }
+    .project-name { color: #aeb8bc; margin-left: 8px; }
+    .window-controls { margin-left: auto; display: flex; height: 100%; }
+    .window-control { width: 46px; display: grid; place-items: center; color: #d7dddf; }
+    .window-control.close { font-size: 18px; }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 16px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+    button {
+      height: 36px;
+      border: 1px solid var(--line-strong);
+      border-radius: 4px;
+      background: #fff;
+      color: #2d353a;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 0 13px;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    button.icon { width: 36px; padding: 0; font-size: 17px; }
+    button:disabled { color: #a4abb0; background: #f7f8f8; }
+    .toolbar-separator { width: 1px; height: 26px; background: var(--line); margin: 0 4px; }
+    .toolbar-title { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .toolbar-title strong { color: #31393e; font-weight: 600; }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 286px minmax(0, 1fr) 348px;
+    }
+    .sidebar, .inspector { background: var(--panel); min-height: 0; }
+    .sidebar { border-right: 1px solid var(--line); display: grid; grid-template-rows: 50px 1fr 118px; }
+    .section-head {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .count { margin-left: 6px; color: var(--muted); font-weight: 400; }
+    .head-actions { margin-left: auto; display: flex; gap: 4px; }
+    .head-action { border: 0; width: 28px; height: 28px; padding: 0; color: #59636a; }
+    .file-list { overflow: hidden; padding: 6px 0; }
+    .file-item {
+      height: 104px;
+      display: grid;
+      grid-template-columns: 58px minmax(0, 1fr) 22px;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 11px;
+      border-left: 3px solid transparent;
+      border-bottom: 1px solid #eef0f1;
+    }
+    .file-item.selected { background: var(--accent-soft); border-left-color: var(--accent); }
+    .thumb {
+      width: 54px;
+      height: 76px;
+      object-fit: cover;
+      border: 1px solid #c8cecf;
+      background: #eee;
+    }
+    .file-info { min-width: 0; align-self: stretch; padding-top: 5px; }
+    .filename { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meta { color: var(--muted); font-size: 11px; margin-top: 7px; }
+    .state { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 11px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #aeb6bb; }
+    .state.review { color: #a56d08; }
+    .state.review .dot { background: var(--review); }
+    .state.done { color: var(--protect); }
+    .state.done .dot { background: var(--protect); }
+    .check { color: var(--accent); text-align: center; font-size: 15px; }
+    .batch-summary { border-top: 1px solid var(--line); padding: 13px 14px; background: #fafbfb; }
+    .summary-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+    .summary-row strong { color: var(--text); }
+    .progress { height: 5px; background: #dde2e4; overflow: hidden; }
+    .progress > div { width: 42%; height: 100%; background: var(--accent); }
+    .summary-note { margin-top: 10px; font-size: 11px; color: var(--muted); }
+
+    .stage { min-width: 0; display: grid; grid-template-rows: 48px 1fr; background: #dfe4e6; }
+    .viewbar {
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      background: #f8f9f9;
+      border-bottom: 1px solid var(--line);
+      gap: 10px;
+    }
+    .segmented { height: 30px; display: flex; border: 1px solid var(--line-strong); border-radius: 4px; overflow: hidden; }
+    .segmented button { height: 28px; border: 0; border-right: 1px solid var(--line-strong); border-radius: 0; padding: 0 14px; background: #fff; font-size: 12px; }
+    .segmented button:last-child { border-right: 0; }
+    .segmented button.active { background: #e5efed; color: #135e57; font-weight: 600; }
+    .legend { display: flex; align-items: center; gap: 14px; margin-left: 10px; font-size: 11px; color: var(--muted); }
+    .legend span { display: flex; align-items: center; gap: 5px; }
+    .swatch { width: 10px; height: 10px; border-radius: 2px; }
+    .swatch.remove { background: rgba(212, 71, 71, .8); }
+    .swatch.protect { background: rgba(41, 135, 92, .8); }
+    .swatch.review { background: rgba(213, 154, 36, .85); }
+    .zoom { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+    .zoom-line { width: 84px; height: 3px; background: #cbd1d4; position: relative; }
+    .zoom-line::after { content: ""; position: absolute; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); left: 50px; top: -4px; }
+    .canvas {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      background: #bfc6c9;
+    }
+    .viewer { min-width: 0; display: grid; grid-template-rows: 34px 1fr; background: #d6dcde; }
+    .viewer-head { display: flex; align-items: center; padding: 0 12px; background: #eef1f2; font-size: 12px; color: #505a60; }
+    .viewer-head strong { color: #242b2f; margin-right: 7px; }
+    .viewer-head .page-size { margin-left: auto; color: #7a858b; font-size: 11px; }
+    .viewport { position: relative; display: grid; place-items: center; overflow: hidden; padding: 20px; }
+    .paper-wrap { height: 756px; aspect-ratio: 2269 / 3173; position: relative; box-shadow: 0 4px 15px rgba(34, 42, 46, .25); background: #f2f1db; }
+    .paper { display: block; width: 100%; height: 100%; object-fit: fill; }
+    .edge-guide { position: absolute; inset: 0 auto 0 10.5%; width: 2px; background: rgba(212, 71, 71, .88); box-shadow: 0 0 0 1px rgba(255,255,255,.75); }
+    .edge-guide::before { content: "20 mm"; position: absolute; top: 8px; left: 6px; padding: 3px 5px; color: #fff; background: var(--danger); font-size: 9px; white-space: nowrap; }
+    .mask { position: absolute; background: rgba(212, 71, 71, .64); outline: 2px solid rgba(182, 45, 45, .95); }
+    .mask.one { left: 6.6%; top: 25.5%; width: 5.8%; height: 2.6%; border-radius: 52% 40% 60% 35%; transform: rotate(-10deg); }
+    .mask.two { left: 6.2%; top: 48.2%; width: 6.3%; height: 2.7%; border-radius: 48% 62% 40% 54%; transform: rotate(8deg); }
+    .mask.three { left: 6.3%; top: 67.1%; width: 6%; height: 2.5%; border-radius: 58% 42% 60% 38%; transform: rotate(-7deg); }
+    .protect-box { position: absolute; left: 14.7%; top: 19%; width: 72%; height: 63%; border: 2px solid rgba(41, 135, 92, .84); background: rgba(41, 135, 92, .04); }
+    .protect-box::before { content: "正文保护"; position: absolute; top: -20px; right: -2px; padding: 2px 5px; background: var(--protect); color: #fff; font-size: 9px; }
+    .repair-strip { position: absolute; left: 1px; top: 1px; bottom: 1px; width: 10.3%; background: rgba(239, 239, 215, .91); border-right: 1px dashed rgba(23, 107, 99, .8); mix-blend-mode: normal; }
+    .repair-strip::after { content: "已修复"; position: absolute; top: 9px; right: 5px; color: #176b63; font-size: 9px; writing-mode: vertical-rl; }
+    .review-flag { position: absolute; right: 11%; top: 6%; padding: 5px 7px; background: rgba(255,255,255,.94); border: 1px solid #d9b156; border-radius: 3px; color: #98660a; font-size: 10px; box-shadow: 0 2px 7px rgba(0,0,0,.12); }
+
+    .inspector { border-left: 1px solid var(--line); display: grid; grid-template-rows: 46px 1fr 92px; }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .tab { flex: 1; display: grid; place-items: center; color: var(--muted); font-size: 12px; border-bottom: 2px solid transparent; }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .settings { min-height: 0; overflow: hidden; }
+    .setting-section { border-bottom: 1px solid var(--line); padding: 10px 16px 11px; }
+    .setting-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; }
+    .setting-help { margin-left: auto; color: #8a9499; font-weight: 400; }
+    .edge-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .edge-option {
+      height: 44px;
+      display: grid;
+      grid-template-columns: 22px 1fr 58px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+    .edge-option.active { border-color: #8ebeb7; background: #f0f7f6; }
+    .checkbox { width: 15px; height: 15px; border: 1px solid #afb8bd; border-radius: 2px; display: grid; place-items: center; color: transparent; background: #fff; }
+    .active .checkbox { color: white; background: var(--accent); border-color: var(--accent); font-size: 10px; }
+    .measure { color: #4b565c; text-align: right; font-size: 11px; }
+    .row { min-height: 29px; display: flex; align-items: center; font-size: 12px; }
+    .row + .row { margin-top: 2px; }
+    .row-label { color: #465057; }
+    .row-value { margin-left: auto; color: var(--muted); }
+    .switch { margin-left: auto; width: 34px; height: 18px; border-radius: 9px; background: #c8ced1; position: relative; }
+    .switch::after { content: ""; width: 14px; height: 14px; border-radius: 50%; background: #fff; position: absolute; top: 2px; left: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+    .switch.on { background: var(--accent); }
+    .switch.on::after { left: 18px; }
+    .slider { height: 3px; background: #d6dbde; flex: 1; margin: 0 12px; position: relative; }
+    .slider::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 58%; background: var(--accent); }
+    .slider::after { content: ""; position: absolute; left: calc(58% - 5px); top: -4px; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); }
+    .protect-list { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 10px; }
+    .protect-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #485258; }
+    .mini-check { width: 14px; height: 14px; background: var(--protect); color: white; display: grid; place-items: center; font-size: 9px; border-radius: 2px; }
+    .risk-box { border-left: 3px solid var(--review); background: #fff8e8; padding: 7px 10px; font-size: 11px; line-height: 1.45; color: #775713; }
+    .inspector-actions { border-top: 1px solid var(--line); padding: 10px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #fafbfb; }
+    .inspector-actions button { width: 100%; }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 12px;
+      background: #263136;
+      color: #c6ced1;
+      font-size: 11px;
+    }
+    .status-ok { color: #8ed2c3; }
+    .statusbar .right { margin-left: auto; display: flex; gap: 18px; }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="titlebar">
+      <div class="appmark">净</div>
+      <div class="appname">档案净页</div>
+      <div class="project-name">87-WS.1998.02.0005 · 批次复核</div>
+      <div class="window-controls">
+        <div class="window-control">—</div>
+        <div class="window-control">□</div>
+        <div class="window-control close">×</div>
+      </div>
+    </header>
+
+    <nav class="toolbar">
+      <button>＋ 添加文件</button>
+      <button>打开文件夹</button>
+      <div class="toolbar-separator"></div>
+      <button class="icon" title="撤销">↶</button>
+      <button class="icon" title="重做" disabled>↷</button>
+      <button>保存为方案</button>
+      <div class="toolbar-separator"></div>
+      <button>分析当前批次</button>
+      <button class="primary">▶ 开始批量处理</button>
+      <div class="toolbar-title">当前方案：<strong>四边保守清理</strong></div>
+    </nav>
+
+    <section class="workspace">
+      <aside class="sidebar">
+        <div class="section-head">
+          文件队列 <span class="count">5 张</span>
+          <div class="head-actions">
+            <button class="head-action" title="筛选">≡</button>
+            <button class="head-action" title="更多">•••</button>
+          </div>
+        </div>
+        <div class="file-list">
+          <div class="file-item selected">
+            <img class="thumb" src="../Files/87-WS.1998.02.0005_07.jpg" alt="档案缩略图">
+            <div class="file-info">
+              <div class="filename">87-WS.1998.02.0005_07.jpg</div>
+              <div class="meta">2269 × 3173 · 300 DPI</div>
+              <div class="state review"><span class="dot"></span>1 处需要确认</div>
+            </div>
+            <div class="check">✓</div>
+          </div>
+          <div class="file-item">
+            <img class="thumb" src="../Files/87-WS.1998.02.0005_06.jpg" alt="档案缩略图">
+            <div class="file-info">
+              <div class="filename">87-WS.1998.02.0005_06.jpg</div>
+              <div class="meta">2266 × 3162 · 300 DPI</div>
+              <div class="state done"><span class="dot"></span>检测完成</div>
+            </div>
+            <div class="check">✓</div>
+          </div>
+          <div class="file-item">
+            <img class="thumb" src="../Files/87-WS.1998.02.0005_08.jpg" alt="档案缩略图">
+            <div class="file-info">
+              <div class="filename">87-WS.1998.02.0005_08.jpg</div>
+              <div class="meta">2273 × 3184 · 300 DPI</div>
+              <div class="state"><span class="dot"></span>等待处理</div>
+            </div>
+            <div class="check">✓</div>
+          </div>
+          <div class="file-item">
+            <img class="thumb" src="../Files/87-WS.1998.02.0005_09.jpg" alt="档案缩略图">
+            <div class="file-info">
+              <div class="filename">87-WS.1998.02.0005_09.jpg</div>
+              <div class="meta">2272 × 3168 · 300 DPI</div>
+              <div class="state"><span class="dot"></span>等待处理</div>
+            </div>
+            <div class="check">✓</div>
+          </div>
+          <div class="file-item">
+            <img class="thumb" src="../Files/87-WS.1998.02.0005_10.jpg" alt="档案缩略图">
+            <div class="file-info">
+              <div class="filename">87-WS.1998.02.0005_10.jpg</div>
+              <div class="meta">2272 × 3185 · 300 DPI</div>
+              <div class="state"><span class="dot"></span>等待处理</div>
+            </div>
+            <div class="check">✓</div>
+          </div>
+        </div>
+        <div class="batch-summary">
+          <div class="summary-row"><span>批次分析</span><strong>2 / 5</strong></div>
+          <div class="progress"><div></div></div>
+          <div class="summary-note">发现 14 处缺陷，1 处存在内容冲突</div>
+        </div>
+      </aside>
+
+      <section class="stage">
+        <div class="viewbar">
+          <div class="segmented">
+            <button class="active">并排</button>
+            <button>滑块对比</button>
+            <button>仅看掩膜</button>
+          </div>
+          <div class="legend">
+            <span><i class="swatch remove"></i>准备去除</span>
+            <span><i class="swatch protect"></i>内容保护</span>
+            <span><i class="swatch review"></i>需要确认</span>
+          </div>
+          <div class="zoom"><button class="icon" title="适合窗口">⌗</button><span>75%</span><div class="zoom-line"></div><button class="icon" title="放大">＋</button></div>
+        </div>
+        <div class="canvas">
+          <article class="viewer">
+            <div class="viewer-head"><strong>原图与检测掩膜</strong>自动分析结果<span class="page-size">第 2 / 5 张</span></div>
+            <div class="viewport">
+              <div class="paper-wrap">
+                <img class="paper" src="../Files/87-WS.1998.02.0005_07.jpg" alt="原始档案扫描件">
+                <div class="edge-guide"></div>
+                <div class="mask one"></div>
+                <div class="mask two"></div>
+                <div class="mask three"></div>
+                <div class="protect-box"></div>
+              </div>
+            </div>
+          </article>
+          <article class="viewer">
+            <div class="viewer-head"><strong>处理预览</strong>纸张背景重建<span class="page-size">预计清理 0.42%</span></div>
+            <div class="viewport">
+              <div class="paper-wrap">
+                <img class="paper" src="../Files/87-WS.1998.02.0005_07.jpg" alt="处理结果预览">
+                <div class="repair-strip"></div>
+                <div class="review-flag">待确认：边缘疑似手写笔画</div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <aside class="inspector">
+        <div class="tabs"><div class="tab active">处理设置</div><div class="tab">人工修正</div><div class="tab">审计信息</div></div>
+        <div class="settings">
+          <section class="setting-section">
+            <div class="setting-title">四边候选范围 <span class="setting-help">单位：mm</span></div>
+            <div class="edge-grid">
+              <div class="edge-option active"><span class="checkbox">✓</span><span>左侧</span><span class="measure">20.0</span></div>
+              <div class="edge-option"><span class="checkbox">✓</span><span>右侧</span><span class="measure">15.0</span></div>
+              <div class="edge-option active"><span class="checkbox">✓</span><span>上侧</span><span class="measure">12.0</span></div>
+              <div class="edge-option active"><span class="checkbox">✓</span><span>下侧</span><span class="measure">15.0</span></div>
+            </div>
+            <div class="row" style="margin-top:9px"><span class="row-label">自动适配页面方向</span><span class="switch on"></span></div>
+          </section>
+
+          <section class="setting-section">
+            <div class="setting-title">缺陷检测</div>
+            <div class="row"><span class="row-label">检测灵敏度</span><div class="slider"></div><span class="row-value">中等</span></div>
+            <div class="row"><span class="row-label">批次重复痕迹</span><span class="switch on"></span></div>
+            <div class="row"><span class="row-label">页面黑边与阴影</span><span class="switch on"></span></div>
+            <div class="row"><span class="row-label">孔洞及撕裂扩展</span><span class="row-value">6 px</span></div>
+          </section>
+
+          <section class="setting-section">
+            <div class="setting-title">内容保护</div>
+            <div class="protect-list">
+              <div class="protect-item"><span class="mini-check">✓</span>印刷文字</div>
+              <div class="protect-item"><span class="mini-check">✓</span>手写批注</div>
+              <div class="protect-item"><span class="mini-check">✓</span>印章与签名</div>
+              <div class="protect-item"><span class="mini-check">✓</span>表格及页码</div>
+            </div>
+            <div class="row" style="margin-top:10px"><span class="row-label">保护区域外扩</span><div class="slider"></div><span class="row-value">8 px</span></div>
+            <div class="row"><span class="row-label">冲突时禁止自动清理</span><span class="switch on"></span></div>
+          </section>
+
+          <section class="setting-section">
+            <div class="setting-title">背景修复</div>
+            <div class="row"><span class="row-label">修复方式</span><span class="row-value">纸张纹理重建 ▾</span></div>
+            <div class="row"><span class="row-label">颜色羽化</span><div class="slider"></div><span class="row-value">自然</span></div>
+            <div class="row"><span class="row-label">保留原始尺寸与 DPI</span><span class="switch on"></span></div>
+          </section>
+
+          <section class="setting-section">
+            <div class="setting-title">当前页风险</div>
+            <div class="risk-box">左侧第 1 个候选区域与疑似手写笔画距离 4 px，已暂停自动清理，请人工确认。</div>
+          </section>
+        </div>
+        <div class="inspector-actions">
+          <button>保留该区域</button>
+          <button>确认去除</button>
+          <button style="grid-column:1 / -1" class="primary">应用设置并重新预览</button>
+        </div>
+      </aside>
+    </section>
+
+    <footer class="statusbar">
+      <span class="status-ok">● 离线处理引擎就绪</span>
+      <span>ONNX 内容保护模型已加载</span>
+      <span>OpenCV 图像引擎正常</span>
+      <div class="right"><span>输出：D:\ArchiveOutput</span><span>原文件不会被覆盖</span></div>
+    </footer>
+  </main>
+</body>
+</html>
