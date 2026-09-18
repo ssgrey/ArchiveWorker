@@ -602,6 +602,14 @@ public partial class MainWindow : Window
     }
     private void ZoomInPreview_Click(object sender, RoutedEventArgs e) => PreviewZoomSlider.Value = Math.Min(400, PreviewZoomSlider.Value + 25);
 
+    private void PreviewToolbarLayout_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (PreviewModeTools is null || PreviewZoomTools is null) return;
+        var requiredWidth = PreviewModeTools.DesiredSize.Width + PreviewZoomTools.DesiredSize.Width;
+        // Keep zoom controls on the right, moving them to the next row only when needed.
+        Grid.SetRow(PreviewZoomTools, e.NewSize.Width < requiredWidth ? 1 : 0);
+    }
+
     private void PreviewContentHost_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdatePreviewLayout();
@@ -1382,6 +1390,39 @@ public partial class MainWindow : Window
 
     private void CatalogTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e) =>
         _viewModel.SelectTreeNode(e.NewValue as CatalogTreeNode);
+
+    private void ImageTreeContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu { DataContext: ImageTreeNode node } menu) return;
+        if (!_viewModel.IsBusy)
+        {
+            // Right-click can open a menu on a node that was not selected with the left button.
+            DependencyObject? target = menu.PlacementTarget;
+            while (target is not null && target is not TreeViewItem)
+                target = VisualTreeHelper.GetParent(target);
+            if (target is TreeViewItem treeItem) treeItem.IsSelected = true;
+            _viewModel.SelectTreeNode(node);
+        }
+        foreach (var entry in menu.Items.OfType<MenuItem>())
+            entry.IsEnabled = !_viewModel.IsBusy &&
+                (entry.Tag as string != "RestoreOriginal" || node.Image.Analysis is not null);
+    }
+
+    private async void ReanalyzeTreeImage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsBusy || sender is not MenuItem { DataContext: ImageTreeNode node }) return;
+        _viewModel.SelectTreeNode(node);
+        await RunCancelableAsync(_viewModel.RefreshSelectedAsync,
+            "重新分析已取消", "重新分析当前图片失败");
+    }
+
+    private async void RestoreTreeImage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsBusy || sender is not MenuItem { DataContext: ImageTreeNode node }) return;
+        _viewModel.SelectTreeNode(node);
+        await RunCancelableAsync(_viewModel.RestoreSelectedToOriginalAsync,
+            "恢复原图操作已取消", "恢复原图失败");
+    }
 
     private void RemoveTreeNode_Click(object sender, RoutedEventArgs e)
     {

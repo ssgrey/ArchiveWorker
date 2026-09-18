@@ -106,9 +106,8 @@ public sealed class ArchiveImageItem : ObservableObject
         RedoHistory.Clear();
         while (UndoHistory.Count > MaximumHistoryEntries || UndoHistory.Sum(item => item.PixelCount) > MaximumHistoryPixels)
         {
-            var removed = UndoHistory[0];
+            // Expiring undo entries must not remove edits that are still visible or exported.
             UndoHistory.RemoveAt(0);
-            if (removed is ManualPixelChange pixelChange) CloneStampHistory.Remove(pixelChange);
         }
     }
 
@@ -120,6 +119,12 @@ public sealed class ArchiveImageItem : ObservableObject
     }
 
     public void RemoveCloneStamp(ManualPixelChange change) => CloneStampHistory.Remove(change);
+    public void ReplaceCloneStamps(IReadOnlyList<ManualPixelChange> stamps)
+    {
+        var snapshot = stamps.ToArray();
+        CloneStampHistory.Clear();
+        CloneStampHistory.AddRange(snapshot);
+    }
     public void RestoreCloneStamp(ManualPixelChange change)
     {
         if (!CloneStampHistory.Contains(change)) CloneStampHistory.Add(change);

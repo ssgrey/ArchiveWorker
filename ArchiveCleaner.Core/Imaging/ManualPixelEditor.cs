@@ -26,6 +26,41 @@ public sealed class ManualPixelChange : IManualEditChange
 
 public static class ManualPixelEditor
 {
+    // Remove the covered pixels from every stamp, so older overlapping stamps cannot reappear.
+    public static IReadOnlyList<ManualPixelChange> EraseCloneStamps(
+        IReadOnlyList<ManualPixelChange> stamps, int width, int height,
+        IReadOnlyList<PixelPoint> points, int diameter)
+    {
+        if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+        if (diameter is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(diameter));
+        if (points.Count == 0 || stamps.Count == 0) return stamps.ToArray();
+        var erased = ManualMaskEditor.CollectBrushIndices(points, diameter, width, height);
+        var remaining = new List<ManualPixelChange>();
+        foreach (var stamp in stamps)
+        {
+            var positions = Enumerable.Range(0, stamp.PixelCount)
+                .Where(position => !erased.Contains(stamp.Indices[position])).ToArray();
+            if (positions.Length == stamp.PixelCount)
+            {
+                remaining.Add(stamp);
+                continue;
+            }
+            if (positions.Length == 0) continue;
+            var indices = new int[positions.Length];
+            var before = new byte[positions.Length * 3];
+            var after = new byte[before.Length];
+            for (var i = 0; i < positions.Length; i++)
+            {
+                indices[i] = stamp.Indices[positions[i]];
+                Array.Copy(stamp.BeforePixels, positions[i] * 3, before, i * 3, 3);
+                Array.Copy(stamp.AfterPixels, positions[i] * 3, after, i * 3, 3);
+            }
+            remaining.Add(new ManualPixelChange(indices, before, after,
+                stamp.SamplePoint, stamp.TargetPoints, stamp.Diameter));
+        }
+        return remaining;
+    }
+
     public static ManualPixelChange ApplyCloneStamp(byte[] pixels, int width, int height,
         PixelPoint samplePoint, IReadOnlyList<PixelPoint> targetPoints, int diameter)
     {

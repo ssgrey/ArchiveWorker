@@ -112,7 +112,7 @@ public static class ManualMaskEditor
         return new ManualMaskChange(changedIndices.ToArray(), beforeStates.ToArray(), afterStates.ToArray());
     }
 
-    private static HashSet<int> CollectBrushIndices(IReadOnlyList<PixelPoint> points, int diameter, int width, int height)
+    internal static HashSet<int> CollectBrushIndices(IReadOnlyList<PixelPoint> points, int diameter, int width, int height)
     {
         var radius = diameter / 2d;
         var indices = new HashSet<int>();

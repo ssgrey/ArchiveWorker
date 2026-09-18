@@ -37,15 +37,17 @@ public sealed class ManualMaskEditorTests
 
         var removeChange = ManualMaskEditor.ApplyBrush(protection, removal, width, height,
             ManualMaskEditKind.Remove, [new PixelPoint(20, 15), new PixelPoint(40, 15)], 6);
-        Assert.Equal(0, removeChange.PixelCount);
-        Assert.Equal(255, protection[15 * width + 30]);
-        Assert.Equal(0, removal[15 * width + 30]);
+        // The latest manual brush overrides the previous mask state.
+        Assert.True(removeChange.PixelCount > 0);
+        Assert.Equal(0, protection[15 * width + 30]);
+        Assert.Equal(255, removal[15 * width + 30]);
 
         var eraseChange = ManualMaskEditor.ApplyBrush(protection, removal, width, height,
             ManualMaskEditKind.Erase, [new PixelPoint(20, 15), new PixelPoint(40, 15)], 6);
         Assert.Equal(0, protection[15 * width + 30]);
         ManualMaskEditor.Undo(protection, removal, width, height, eraseChange);
-        Assert.Equal(255, protection[15 * width + 30]);
+        Assert.Equal(0, protection[15 * width + 30]);
+        Assert.Equal(255, removal[15 * width + 30]);
         ManualMaskEditor.Redo(protection, removal, width, height, eraseChange);
         Assert.Equal(0, protection[15 * width + 30]);
 
@@ -55,6 +57,7 @@ public sealed class ManualMaskEditorTests
 
         ManualMaskEditor.Undo(protection, removal, width, height, appliedRemove);
         ManualMaskEditor.Undo(protection, removal, width, height, eraseChange);
+        ManualMaskEditor.Undo(protection, removal, width, height, removeChange);
         ManualMaskEditor.Undo(protection, removal, width, height, protectChange);
         Assert.All(protection, value => Assert.Equal(0, value));
         Assert.All(removal, value => Assert.Equal(0, value));

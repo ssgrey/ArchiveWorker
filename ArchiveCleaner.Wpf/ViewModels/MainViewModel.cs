@@ -104,7 +104,7 @@ public sealed class MainViewModel : ObservableObject
     public string SelectionSummary => $"已选择 {SelectedCount} / 共 {TotalCount} 张";
     public string DirectoryPositionText => $"{(SelectedImage is null ? 0 : Images.IndexOf(SelectedImage) + 1)}/{Images.Count}";
     public bool CanRunSelectedBatch => !IsBusy && SelectedCount > 0;
-    public bool CanRestoreOriginal => !IsBusy && SelectedImage?.Analysis is not null && !SelectedImage.ManualOnly;
+    public bool CanRestoreOriginal => !IsBusy && SelectedImage?.Analysis is not null;
     public bool CanCancelOperation { get => _canCancelOperation; private set => SetProperty(ref _canCancelOperation, value); }
 
     public void SetOperationCancelable(bool canCancel) => CanCancelOperation = canCancel;
@@ -181,7 +181,7 @@ public sealed class MainViewModel : ObservableObject
         ManualEditMode.ProtectBrush => "保护笔刷：在左侧图像上拖动",
         ManualEditMode.RemoveBrush => "去除笔刷：在左侧图像上拖动",
         ManualEditMode.CloneStamp => "仿制图章：按住 Alt 点击取样，再拖动复制",
-        ManualEditMode.Eraser => "恢复橡皮擦：拖动恢复自动或人工移除的原图内容",
+        ManualEditMode.Eraser => "恢复橡皮擦：拖动恢复自动去除、人工去除或仿制图章覆盖的原图内容",
         _ => "请选择人工修正工具"
     };
     public string ManualCorrectionSummary => SelectedImage is null
@@ -497,32 +497,33 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task RefreshSelectedAsync(CancellationToken cancellationToken = default)
     {
-        if (SelectedImage is null || IsBusy) return;
+        var item = SelectedImage;
+        if (item is null || IsBusy) return;
         IsBusy = true;
         try
         {
-            SelectedImage.StatusKind = ImageStatusKind.Analyzing;
-            SelectedImage.StatusText = "正在重新分析";
-            SelectedImage.ManualOnly = false;
-            SelectedImage.ClearManualCorrections();
-            await AnalyzeItemAsync(SelectedImage, SelectedImage.ApplyBoundary(Settings.CreateSnapshot()), cancellationToken);
-            var unresolved = SelectedImage.ReviewRegions.Where(region => !SelectedImage.Decisions.ContainsKey(region.Id)).ToArray();
+            item.StatusKind = ImageStatusKind.Analyzing;
+            item.StatusText = "正在重新分析";
+            item.ManualOnly = false;
+            item.ClearManualCorrections();
+            await AnalyzeItemAsync(item, item.ApplyBoundary(Settings.CreateSnapshot()), cancellationToken);
+            var unresolved = item.ReviewRegions.Where(region => !item.Decisions.ContainsKey(region.Id)).ToArray();
             foreach (var region in unresolved)
             {
-                SelectedImage.Decisions[region.Id] = ReviewDecision.Remove;
+                item.Decisions[region.Id] = ReviewDecision.Remove;
                 region.DecisionText = "已批准去除";
             }
-            if (SelectedImage.Analysis is not null)
+            if (item.Analysis is not null)
             {
-                var result = await new DocumentCleanupEngine().RepairAsync(SelectedImage.Analysis,
-                    CreateDecisionSet(SelectedImage), cancellationToken);
-                foreach (var stamp in SelectedImage.ActiveCloneStamps)
+                var result = await new DocumentCleanupEngine().RepairAsync(item.Analysis,
+                    CreateDecisionSet(item), cancellationToken);
+                foreach (var stamp in item.ActiveCloneStamps)
                     ManualPixelEditor.ApplyChange(result.RepairedImage.Pixels, stamp, useAfter: true);
-                SelectedImage.RepairedPreview = _imageCatalog.CreateBitmapSource(result.RepairedImage);
-                UpdateItemStatus(SelectedImage);
+                item.RepairedPreview = _imageCatalog.CreateBitmapSource(result.RepairedImage);
+                UpdateItemStatus(item);
                 NotifySelectedPreviewChanged();
             }
-            EngineStatus = $"已按当前设置重新分析 {SelectedImage.FileName}";
+            EngineStatus = $"已按当前设置重新分析 {item.FileName}";
             UpdateRiskForSelected();
             UpdateReviewSummary();
         }
@@ -626,12 +627,14 @@ public sealed class MainViewModel : ObservableObject
             foreach (var region in item.ReviewRegions) region.DecisionText = "未确认";
             item.AnalysisPreview = _imageCatalog.CreateBitmapSource(CreateManualOverlay(item));
             item.RepairedPreview = _imageCatalog.CreateBitmapSource(original);
+            item.MaskPreview = _imageCatalog.CreateBitmapSource(CreateMaskPreview(item));
             UpdateItemStatus(item);
             SelectedReviewRegion = item.ReviewRegions.FirstOrDefault();
             NotifySelectedPreviewChanged();
             UpdateRiskForSelected();
             UpdateReviewSummary();
             EngineStatus = "已恢复原图，当前图片切换为仅手工处理";
+            OnPropertyChanged(nameof(ManualCorrectionSummary));
             return Task.CompletedTask;
         }
         finally
@@ -666,13 +669,18 @@ public sealed class MainViewModel : ObservableObject
             ManualEditMode.RemoveBrush => ManualMaskEditKind.Remove,
             _ => ManualMaskEditKind.Protect
         };
-        ManualMaskChange change;
+        IManualEditChange change;
         if (mode == ManualEditMode.Eraser)
         {
             var underlyingRemovalMask = DocumentCleanupEngine.CreateRepairMask(item.Analysis,
                 new ReviewDecisionSet(item.Decisions, disableAutomaticRepair: item.ManualOnly), cancellationToken);
-            change = ManualMaskEditor.ApplyRestoreBrush(item.ManualProtectionPixels, item.ManualRemovalPixels,
+            var beforeStamps = item.ActiveCloneStamps.ToArray();
+            var afterStamps = ManualPixelEditor.EraseCloneStamps(beforeStamps,
+                item.PixelWidth, item.PixelHeight, points, brushDiameter);
+            var maskChange = ManualMaskEditor.ApplyRestoreBrush(item.ManualProtectionPixels, item.ManualRemovalPixels,
                 item.PixelWidth, item.PixelHeight, points, brushDiameter, underlyingRemovalMask);
+            change = new ManualRestoreChange(maskChange, beforeStamps, afterStamps);
+            item.ReplaceCloneStamps(afterStamps);
         }
         else
         {
@@ -692,6 +700,11 @@ public sealed class MainViewModel : ObservableObject
         if (change is null) return;
         switch (change)
         {
+            case ManualRestoreChange restoreChange:
+                ManualMaskEditor.Undo(item.ManualProtectionPixels!, item.ManualRemovalPixels!,
+                    item.PixelWidth, item.PixelHeight, restoreChange.MaskChange);
+                item.ReplaceCloneStamps(restoreChange.BeforeStamps);
+                break;
             case ManualMaskChange maskChange:
                 ManualMaskEditor.Undo(item.ManualProtectionPixels!, item.ManualRemovalPixels!, item.PixelWidth, item.PixelHeight, maskChange);
                 break;
@@ -710,6 +723,11 @@ public sealed class MainViewModel : ObservableObject
         if (change is null) return;
         switch (change)
         {
+            case ManualRestoreChange restoreChange:
+                ManualMaskEditor.Redo(item.ManualProtectionPixels!, item.ManualRemovalPixels!,
+                    item.PixelWidth, item.PixelHeight, restoreChange.MaskChange);
+                item.ReplaceCloneStamps(restoreChange.AfterStamps);
+                break;
             case ManualMaskChange maskChange:
                 ManualMaskEditor.Redo(item.ManualProtectionPixels!, item.ManualRemovalPixels!, item.PixelWidth, item.PixelHeight, maskChange);
                 break;

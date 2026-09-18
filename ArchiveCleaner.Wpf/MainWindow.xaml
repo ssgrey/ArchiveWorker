@@ -15,7 +15,7 @@
 
     <Window.Resources>
         <Style x:Key="SegmentButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Height" Value="30" /><Setter Property="MinWidth" Value="68" /><Setter Property="Padding" Value="10,0" />
+            <Setter Property="Height" Value="30" /><Setter Property="MinWidth" Value="80" /><Setter Property="Padding" Value="10,0" />
             <Setter Property="Background" Value="White" /><Setter Property="BorderBrush" Value="#C5CCD1" /><Setter Property="BorderThickness" Value="1,1,0,1" /><Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
                 <Border x:Name="SegmentBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
@@ -41,6 +41,9 @@
                 <ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource AccentSoftBrush}" /><Setter TargetName="ItemBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" /></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemBorder" Property="Background" Value="#F4F8F7" /></Trigger></ControlTemplate.Triggers>
             </ControlTemplate></Setter.Value></Setter>
         </Style>
+        <!-- 图片目录节点颜色：选中（包括失去焦点）和未选中时的鼠标悬停。 -->
+        <SolidColorBrush x:Key="CatalogTreeSelectedBackgroundBrush" Color="#87CEFA" />
+        <SolidColorBrush x:Key="CatalogTreeHoverBackgroundBrush" Color="#F4F8F7" />
         <Style x:Key="CatalogTreeItemStyle" TargetType="TreeViewItem">
             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -48,15 +51,69 @@
             <Setter Property="Margin" Value="0" />
             <Setter Property="Background" Value="White" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Style.Triggers>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#EAF5F3" />
-                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                </Trigger>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#F4F8F7" />
-                </Trigger>
-            </Style.Triggers>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TreeViewItem">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="20" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <ToggleButton x:Name="Expander" Width="18" Height="20"
+                                          Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent">
+                                            <Path x:Name="Arrow" Data="M 0,0 L 4,4 L 0,8"
+                                                  Stroke="{StaticResource MutedTextBrush}" StrokeThickness="1.5"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  RenderTransformOrigin="0.5,0.5" />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Arrow" Property="RenderTransform">
+                                                    <Setter.Value><RotateTransform Angle="90" /></Setter.Value>
+                                                </Setter>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <Border x:Name="HeaderBorder" Grid.Column="1"
+                                    Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter x:Name="PART_Header" ContentSource="Header"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                            </Border>
+                            <ItemsPresenter x:Name="ItemsHost" Grid.Row="1" Grid.Column="1" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
+                            </Trigger>
+                            <Trigger SourceName="HeaderBorder" Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HeaderBorder" Property="Background" Value="{StaticResource CatalogTreeHoverBackgroundBrush}" />
+                            </Trigger>
+                            <!-- 选中优先于悬停，失去键盘焦点后仍保留同一选中颜色。 -->
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="HeaderBorder" Property="Background" Value="{StaticResource AccentSoftBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -145,7 +202,7 @@
                     <TreeView Grid.Row="1" ItemsSource="{Binding TreeRoots}" BorderThickness="0" Background="White" ItemContainerStyle="{StaticResource CatalogTreeItemStyle}" SelectedItemChanged="CatalogTree_SelectedItemChanged" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                         <TreeView.Resources>
                             <HierarchicalDataTemplate DataType="{x:Type models:FolderTreeNode}" ItemsSource="{Binding Children}"><DockPanel Height="30" MinWidth="190"><DockPanel.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><MenuItem Header="移除文件夹" Click="RemoveTreeNode_Click" /></ContextMenu></DockPanel.ContextMenu><CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" IsThreeState="False" AutomationProperties.Name="{Binding Name, StringFormat=选择目录 {0}}" VerticalAlignment="Center" Margin="0,0,7,0" ToolTip="勾选或取消该目录下的全部图片。" /><TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Foreground="{StaticResource AccentBrush}" Margin="0,0,7,0" VerticalAlignment="Center" /><TextBlock DockPanel.Dock="Right" Text="{Binding Summary}" Style="{StaticResource MutedTextStyle}" Margin="8,0,4,0" VerticalAlignment="Center" /><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding FullPath}" /></DockPanel></HierarchicalDataTemplate>
-                            <DataTemplate DataType="{x:Type models:ImageTreeNode}"><Grid Height="78" MinWidth="205" ToolTip="{Binding Image.FilePath}"><Grid.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"><MenuItem Header="移除文件" Click="RemoveTreeNode_Click" /></ContextMenu></Grid.ContextMenu><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" AutomationProperties.Name="{Binding Image.FileName, StringFormat=选择图片 {0}}" VerticalAlignment="Center" ToolTip="控制该图片是否参与批量分析、确认去除和导出。" /><StackPanel Grid.Column="1" Margin="8,8,4,8"><TextBlock Text="{Binding Image.FileName}" FontSize="11" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Image.DimensionsText}" Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" /><StackPanel Orientation="Horizontal" Margin="0,5,0,0"><Ellipse Width="7" Height="7" Fill="{Binding Image.StatusBrush}" VerticalAlignment="Center" /><TextBlock Text="{Binding Image.StatusText}" Foreground="{Binding Image.StatusBrush}" FontSize="11" Margin="5,0,0,0" /></StackPanel></StackPanel></Grid></DataTemplate>
+                            <DataTemplate DataType="{x:Type models:ImageTreeNode}"><Grid Height="78" MinWidth="205" ToolTip="{Binding Image.FilePath}"><Grid.ContextMenu><ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}" Opened="ImageTreeContextMenu_Opened"><MenuItem Header="重新分析当前图片" Click="ReanalyzeTreeImage_Click" ToolTip="清除当前图片的人工修改，并按当前设置重新分析。" /><MenuItem Header="恢复成原图" Tag="RestoreOriginal" Click="RestoreTreeImage_Click" ToolTip="恢复当前图片的原始内容，并切换为仅手工处理；可重复执行。" /><Separator /><MenuItem Header="移除文件" Click="RemoveTreeNode_Click" /></ContextMenu></Grid.ContextMenu><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" AutomationProperties.Name="{Binding Image.FileName, StringFormat=选择图片 {0}}" VerticalAlignment="Center" ToolTip="控制该图片是否参与批量分析、确认去除和导出。" /><StackPanel Grid.Column="1" Margin="8,8,4,8"><TextBlock Text="{Binding Image.FileName}" FontSize="11" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Image.DimensionsText}" Style="{StaticResource MutedTextStyle}" Margin="0,5,0,0" /><StackPanel Orientation="Horizontal" Margin="0,5,0,0"><Ellipse Width="7" Height="7" Fill="{Binding Image.StatusBrush}" VerticalAlignment="Center" /><TextBlock Text="{Binding Image.StatusText}" Foreground="{Binding Image.StatusBrush}" FontSize="11" Margin="5,0,0,0" /></StackPanel></StackPanel></Grid></DataTemplate>
                         </TreeView.Resources>
                     </TreeView>
                     <Border Grid.Row="2" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Background="#FAFBFB" Padding="13,12"><StackPanel>
@@ -157,13 +214,45 @@
             </Border>
 
             <Grid Grid.Column="1" Background="#D8DEE0">
-                <Grid.RowDefinitions><RowDefinition Height="48" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                <Border Grid.Row="0" Background="#F8F9F9" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" VerticalAlignment="Stretch"><DockPanel Margin="12,0" Height="34" VerticalAlignment="Center">
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Height="34" VerticalAlignment="Center"><ToggleButton Style="{StaticResource SegmentButtonStyle}" IsChecked="{Binding Settings.ShowRulers, Mode=TwoWay}" Content="四边刻度" ToolTip="显示或隐藏图片四周的毫米刻度。" /><ToggleButton Style="{StaticResource SegmentButtonStyle}" IsChecked="{Binding Settings.ShowCrosshair, Mode=TwoWay}" Content="十字参考线" ToolTip="显示或隐藏两张图片同步的十字参考线。" Margin="4,0,8,0" /><Button Style="{StaticResource IconButtonStyle}" Content="&#xE9A6;" Click="FitPreview_Click" AutomationProperties.Name="适合窗口" ToolTip="让当前扫描页完整显示在预览区域中。" /><TextBlock x:Name="PreviewZoomText" Text="100%" Width="42" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Margin="6,0" /><Slider x:Name="PreviewZoomSlider" Width="92" Height="30" VerticalAlignment="Center" Minimum="25" Maximum="400" Value="100" SmallChange="5" LargeChange="25" ValueChanged="PreviewZoom_ValueChanged" ToolTip="相对于适合窗口的大小调整预览，范围 25%～400%。" /><Button Style="{StaticResource IconButtonStyle}" Content="&#xE8A3;" Click="ZoomInPreview_Click" Margin="8,0,0,0" AutomationProperties.Name="放大预览" ToolTip="将预览放大 25%。" /></StackPanel>
-                    <StackPanel Orientation="Horizontal" Height="34" VerticalAlignment="Center"><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><ToggleButton x:Name="SideBySideModeButton" Style="{StaticResource SegmentButtonStyle}" IsChecked="True" Content="并排" Click="PreviewMode_Click" ToolTip="左侧显示原图和检测掩膜，右侧显示处理预览，滚动位置保持同步。" /><ToggleButton x:Name="CompareModeButton" Style="{StaticResource SegmentButtonStyle}" Content="滑块对比" Click="PreviewMode_Click" ToolTip="在同一位置拖动分隔线比较原图与修复结果。" /><ToggleButton x:Name="MaskOnlyModeButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Content="仅看掩膜" Click="PreviewMode_Click" ToolTip="隐藏纸张内容，只显示准备删除、受保护、需要确认及人工标记区域。" /></StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center" ToolTip="红色表示准备去除，绿色表示内容保护，黄色表示需要人工确认。"><Rectangle Width="10" Height="10" VerticalAlignment="Center" Fill="{StaticResource DangerBrush}" RadiusX="2" RadiusY="2" /><TextBlock Text="去除" VerticalAlignment="Center" Margin="5,0,10,0" Foreground="{StaticResource MutedTextBrush}" FontSize="11" /><Rectangle Width="10" Height="10" VerticalAlignment="Center" Fill="{StaticResource ProtectBrush}" RadiusX="2" RadiusY="2" /><TextBlock Text="保护" VerticalAlignment="Center" Margin="5,0,10,0" Foreground="{StaticResource MutedTextBrush}" FontSize="11" /><Rectangle Width="10" Height="10" VerticalAlignment="Center" Fill="{StaticResource ReviewBrush}" RadiusX="2" RadiusY="2" /><TextBlock Text="确认" VerticalAlignment="Center" Margin="5,0,0,0" Foreground="{StaticResource MutedTextBrush}" FontSize="11" /></StackPanel>
-                    </StackPanel>
-                </DockPanel></Border>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Border x:Name="PreviewToolbar" Grid.Row="0" MinHeight="48" Padding="12,4" Background="#F8F9F9" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1">
+                    <Grid x:Name="PreviewToolbarLayout" VerticalAlignment="Center" SizeChanged="PreviewToolbarLayout_SizeChanged">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <StackPanel x:Name="PreviewModeTools" Orientation="Horizontal" Height="34" Margin="0,2,16,2" HorizontalAlignment="Left" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <ToggleButton x:Name="SideBySideModeButton" Style="{StaticResource SegmentButtonStyle}" IsChecked="True" Content="并排" Click="PreviewMode_Click" ToolTip="左侧显示原图和检测掩膜，右侧显示处理预览，滚动位置保持同步。" />
+                                <ToggleButton x:Name="CompareModeButton" Style="{StaticResource SegmentButtonStyle}" Content="滑块对比" Click="PreviewMode_Click" ToolTip="在同一位置拖动分隔线比较原图与修复结果。" />
+                                <ToggleButton x:Name="MaskOnlyModeButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Content="仅看掩膜" Click="PreviewMode_Click" ToolTip="隐藏纸张内容，只显示准备删除、受保护、需要确认及人工标记区域。" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center" ToolTip="红色表示准备去除，绿色表示内容保护，黄色表示需要人工确认。">
+                                <Rectangle Width="10" Height="10" VerticalAlignment="Center" Fill="{StaticResource DangerBrush}" RadiusX="2" RadiusY="2" />
+                                <TextBlock Text="去除" VerticalAlignment="Center" Margin="5,0,10,0" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                <Rectangle Width="10" Height="10" VerticalAlignment="Center" Fill="{StaticResource ProtectBrush}" RadiusX="2" RadiusY="2" />
+                                <TextBlock Text="保护" VerticalAlignment="Center" Margin="5,0,10,0" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                <Rectangle Width="10" Height="10" VerticalAlignment="Center" Fill="{StaticResource ReviewBrush}" RadiusX="2" RadiusY="2" />
+                                <TextBlock Text="确认" VerticalAlignment="Center" Margin="5,0,0,0" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel x:Name="PreviewZoomTools" Orientation="Horizontal" Height="34" Margin="0,2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <ToggleButton Style="{StaticResource SegmentButtonStyle}" IsChecked="{Binding Settings.ShowRulers, Mode=TwoWay}" Content="四边刻度" ToolTip="显示或隐藏图片四周的毫米刻度。" />
+                            <ToggleButton Style="{StaticResource SegmentButtonStyle}" IsChecked="{Binding Settings.ShowCrosshair, Mode=TwoWay}" BorderThickness="1,1,1,1" Content="十字参考线" ToolTip="显示或隐藏两张图片同步的十字参考线。" Margin="1,0,8,0" />
+                            <Button Style="{StaticResource IconButtonStyle}" Click="FitPreview_Click" AutomationProperties.Name="适合窗口" ToolTip="让当前扫描页完整显示在预览区域中。">
+                                <Grid Width="16" Height="16">
+                                    <Path Data="M 1,6 L 1,1 6,1 M 10,1 L 15,1 15,6 M 15,10 L 15,15 10,15 M 6,15 L 1,15 1,10" Stroke="{StaticResource TextBrush}" StrokeThickness="1.3" />
+                                    <Rectangle Width="6" Height="8" Stroke="{StaticResource AccentBrush}" StrokeThickness="1" />
+                                </Grid>
+                            </Button>
+                            <TextBlock x:Name="PreviewZoomText" Text="100%" Width="42" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Margin="6,0" />
+                            <Slider x:Name="PreviewZoomSlider" Width="92" VerticalAlignment="Center" Minimum="25" Maximum="400" Value="100" SmallChange="5" LargeChange="25" ValueChanged="PreviewZoom_ValueChanged" ToolTip="相对于适合窗口的大小调整预览，范围 25%～400%。" />
+                            <Button Style="{StaticResource IconButtonStyle}" Click="ZoomInPreview_Click" Margin="8,0,0,0" AutomationProperties.Name="放大预览" ToolTip="将预览放大 25%。">
+                                <Grid Width="16" Height="16">
+                                    <Ellipse Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="1" Stroke="{StaticResource TextBrush}" StrokeThickness="1.3" />
+                                    <Path Data="M 9,9 L 15,15 M 3,6 L 9,6 M 6,3 L 6,9" Stroke="{StaticResource TextBrush}" StrokeThickness="1.3" />
+                                </Grid>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
                 <Grid x:Name="PreviewContentHost" Grid.Row="1" SizeChanged="PreviewContentHost_SizeChanged" PreviewMouseWheel="PreviewContentHost_PreviewMouseWheel">
                     <Grid x:Name="SideBySidePreviewPanel"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="1" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <Grid Grid.Column="0"><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions><Border Background="#EEF1F2" Padding="11,0"><DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding SelectedIndexText}" Style="{StaticResource MutedTextStyle}" VerticalAlignment="Center" /><TextBlock Text="原图与检测掩膜" FontWeight="SemiBold" VerticalAlignment="Center" /></DockPanel></Border><ScrollViewer x:Name="SideAnalysisScroll" Grid.Row="1" Margin="20" Background="#D6DCDE" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" ScrollChanged="SidePreviewScrollChanged"><Border x:Name="AnalysisImageFrame" BorderBrush="#40484B" BorderThickness="1" SizeChanged="PreviewFrame_SizeChanged"><Grid><Image x:Name="AnalysisPreviewImage" Source="{Binding SelectedAnalysisPreview}" Stretch="Fill" IsHitTestVisible="False" /><Canvas x:Name="ManualDrawingCanvas" AutomationProperties.Name="人工绘制画布" Background="Transparent" Cursor="Cross" MouseLeftButtonDown="ManualCanvas_MouseLeftButtonDown" MouseMove="ManualCanvas_MouseMove" MouseLeftButtonUp="ManualCanvas_MouseLeftButtonUp" MouseLeave="ManualCanvas_MouseLeave" LostMouseCapture="ManualCanvas_LostMouseCapture"><Ellipse x:Name="BrushCursorEllipse" Visibility="Collapsed" IsHitTestVisible="False" Fill="Transparent" StrokeThickness="1.5" StrokeDashArray="3,2" /></Canvas><Canvas x:Name="AnalysisRulerCanvas" IsHitTestVisible="False" /><Canvas x:Name="AnalysisCandidateGuideCanvas" /></Grid></Border></ScrollViewer></Grid>
@@ -232,8 +321,7 @@
                         </StackPanel></ScrollViewer>
                         <Border Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Background="#FAFBFB" Padding="13,10"><Grid><Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="8" /><RowDefinition Height="34" /></Grid.RowDefinitions><Button Visibility="Collapsed" Click="KeepRegion_Click">保留该区域</Button><Button Visibility="Collapsed" Click="RemoveRegion_Click">确认去除</Button><Button Visibility="Collapsed" Click="RemoveAllReviewRegions_Click">全部确认去除</Button><Button Grid.Row="0" Style="{StaticResource PrimaryButtonStyle}" Click="RefreshPreview_Click" ToolTip="使用当前所有设置重新生成检测掩膜和处理预览。此操作只更新屏幕预览，不会覆盖或写出源图片。">应用设置并重新预览</Button><Button Grid.Row="2" Click="RestoreAllDefaults_Click" ToolTip="恢复四边范围、检测、保护、修复和输出的全部系统默认参数，不修改图片或人工修正。">恢复默认参数</Button></Grid></Border>
                     </Grid></TabItem>
-                    <TabItem Header="人工修正" Style="{StaticResource SettingsTabStyle}"><StackPanel Margin="16"><TextBlock Text="人工区域工具" Style="{StaticResource SectionHeaderTextStyle}" /><TextBlock Margin="0,8,0,14" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="选择工具后在左侧图像上拖动。保护标记优先于去除标记，修正会立即更新右侧预览。" /><UniformGrid Columns="2"><ToggleButton x:Name="ProtectBrushButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="0,0,4,8" Click="ProtectBrush_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="使用圆形笔刷涂画保护区域。">保护笔刷</ToggleButton><ToggleButton x:Name="RemoveBrushButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="4,0,0,8" Click="RemoveBrush_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="使用圆形笔刷涂画去除区域。">去除笔刷</ToggleButton><ToggleButton x:Name="CloneStampButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="0,0,4,0" Click="CloneStamp_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="按住 Alt 在左侧图像取样，再拖动复制样本内容。">仿制图章</ToggleButton><ToggleButton x:Name="EraserButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="4,0,0,0" Click="Eraser_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="恢复自动去除、已确认去除或人工去除区域中的原图内容；在没有去除掩膜的位置会清除人工保护标记。">恢复橡皮擦</ToggleButton></UniformGrid><DockPanel Margin="0,14,0,0"><Border DockPanel.Dock="Right" Width="24" Height="24" Background="{Binding CurrentManualToolBrush}" BorderBrush="#647178" BorderThickness="1" CornerRadius="3" /><TextBlock Text="当前工具颜色" VerticalAlignment="Center" /></DockPanel><UniformGrid Columns="6" Margin="0,7,0,0"><Button Height="26" Margin="0,0,3,0" Padding="0" Background="#29875C" BorderBrush="#526067" Tag="#29875C" Click="ToolColor_Click" ToolTip="绿色" /><Button Height="26" Margin="3,0" Padding="0" Background="#D44747" BorderBrush="#526067" Tag="#D44747" Click="ToolColor_Click" ToolTip="红色" /><Button Height="26" Margin="3,0" Padding="0" Background="#2F6FED" BorderBrush="#526067" Tag="#2F6FED" Click="ToolColor_Click" ToolTip="蓝色" /><Button Height="26" Margin="3,0" Padding="0" Background="#D59A24" BorderBrush="#526067" Tag="#D59A24" Click="ToolColor_Click" ToolTip="黄色" /><Button Height="26" Margin="3,0" Padding="0" Background="#168A9C" BorderBrush="#526067" Tag="#168A9C" Click="ToolColor_Click" ToolTip="青色" /><Button Height="26" Margin="3,0,0,0" Padding="0" Background="#59656B" BorderBrush="#526067" Tag="#59656B" Click="ToolColor_Click" ToolTip="灰色；恢复橡皮擦默认颜色" /></UniformGrid><Grid Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="70" /><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions><TextBlock Text="笔刷大小" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="10" Maximum="300" Value="{Binding BrushDiameterPixels}" Margin="8,0" ToolTip="设置圆形保护笔刷、去除笔刷和恢复橡皮擦在原图上的直径。" /><TextBlock Grid.Column="2" Text="{Binding BrushDiameterPixels, StringFormat={}{0:F0} px}" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" /></Grid><Border Margin="0,14,0,0" Padding="10,8" Background="#F4F7F7" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"><StackPanel><TextBlock Text="{Binding ManualToolText}" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" /><TextBlock Margin="0,5,0,0" Text="{Binding ManualCorrectionSummary}" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" /><Button Margin="0,10,0,0" Click="RestoreOriginal_Click" IsEnabled="{Binding CanRestoreOriginal}" ToolTip="恢复当前图片的原始内容，并切换为仅手工处理。">恢复成原图（仅手工处理）</Button></StackPanel></Border></StackPanel></TabItem>
-                    <TabItem Header="处理信息" Style="{StaticResource SettingsTabStyle}"><StackPanel Margin="16"><TextBlock Text="处理信息" Style="{StaticResource SectionHeaderTextStyle}" /><Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="源文件" Foreground="{StaticResource MutedTextBrush}" /><TextBlock Grid.Column="1" Text="{Binding SelectedImage.FileName}" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Row="1" Text="处理状态" Foreground="{StaticResource MutedTextBrush}" Margin="0,9,0,0" /><TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedImage.StatusText}" Margin="0,9,0,0" /></Grid><Border Margin="0,16,0,0" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" Padding="10"><TextBlock TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="批量导出只生成处理后的图片，不会附带 JSON、CSV 或其他审计文件。" /></Border></StackPanel></TabItem>
+                    <TabItem Header="人工修正" Style="{StaticResource SettingsTabStyle}"><StackPanel Margin="16"><TextBlock Text="人工区域工具" Style="{StaticResource SectionHeaderTextStyle}" /><TextBlock Margin="0,8,0,14" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Text="选择工具后在左侧图像上拖动。保护标记优先于去除标记，修正会立即更新右侧预览。" /><UniformGrid Columns="2"><ToggleButton x:Name="ProtectBrushButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="0,0,4,8" Click="ProtectBrush_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="使用圆形笔刷涂画保护区域。">保护笔刷</ToggleButton><ToggleButton x:Name="RemoveBrushButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="4,0,0,8" Click="RemoveBrush_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="使用圆形笔刷涂画去除区域。">去除笔刷</ToggleButton><ToggleButton x:Name="CloneStampButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="0,0,4,0" Click="CloneStamp_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="按住 Alt 在左侧图像取样，再拖动复制样本内容。">仿制图章</ToggleButton><ToggleButton x:Name="EraserButton" Style="{StaticResource SegmentButtonStyle}" BorderThickness="1" Margin="4,0,0,0" Click="Eraser_Click" IsEnabled="{Binding CanUseManualTools}" ToolTip="恢复自动去除、已确认去除、人工去除或仿制图章覆盖区域中的原图内容；在没有去除掩膜的位置会清除人工保护标记。">恢复橡皮擦</ToggleButton></UniformGrid><DockPanel Margin="0,14,0,0"><Border DockPanel.Dock="Right" Width="24" Height="24" Background="{Binding CurrentManualToolBrush}" BorderBrush="#647178" BorderThickness="1" CornerRadius="3" /><TextBlock Text="当前工具颜色" VerticalAlignment="Center" /></DockPanel><UniformGrid Columns="6" Margin="0,7,0,0"><Button Height="26" Margin="0,0,3,0" Padding="0" Background="#29875C" BorderBrush="#526067" Tag="#29875C" Click="ToolColor_Click" ToolTip="绿色" /><Button Height="26" Margin="3,0" Padding="0" Background="#D44747" BorderBrush="#526067" Tag="#D44747" Click="ToolColor_Click" ToolTip="红色" /><Button Height="26" Margin="3,0" Padding="0" Background="#2F6FED" BorderBrush="#526067" Tag="#2F6FED" Click="ToolColor_Click" ToolTip="蓝色" /><Button Height="26" Margin="3,0" Padding="0" Background="#D59A24" BorderBrush="#526067" Tag="#D59A24" Click="ToolColor_Click" ToolTip="黄色" /><Button Height="26" Margin="3,0" Padding="0" Background="#168A9C" BorderBrush="#526067" Tag="#168A9C" Click="ToolColor_Click" ToolTip="青色" /><Button Height="26" Margin="3,0,0,0" Padding="0" Background="#59656B" BorderBrush="#526067" Tag="#59656B" Click="ToolColor_Click" ToolTip="灰色；恢复橡皮擦默认颜色" /></UniformGrid><Grid Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="70" /><ColumnDefinition Width="*" /><ColumnDefinition Width="52" /></Grid.ColumnDefinitions><TextBlock Text="笔刷大小" VerticalAlignment="Center" /><Slider Grid.Column="1" Minimum="10" Maximum="300" Value="{Binding BrushDiameterPixels}" Margin="8,0" ToolTip="设置圆形保护笔刷、去除笔刷和恢复橡皮擦在原图上的直径。" /><TextBlock Grid.Column="2" Text="{Binding BrushDiameterPixels, StringFormat={}{0:F0} px}" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" /></Grid><Border Margin="0,14,0,0" Padding="10,8" Background="#F4F7F7" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"><StackPanel><TextBlock Text="{Binding ManualToolText}" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" /><TextBlock Margin="0,5,0,0" Text="{Binding ManualCorrectionSummary}" Style="{StaticResource MutedTextStyle}" TextWrapping="Wrap" /><Button Margin="0,10,0,0" Click="RestoreOriginal_Click" IsEnabled="{Binding CanRestoreOriginal}" ToolTip="恢复当前图片的原始内容，并切换为仅手工处理。">恢复成原图（仅手工处理）</Button></StackPanel></Border></StackPanel></TabItem>
                 </TabControl>
             </Border>
         </Grid>
