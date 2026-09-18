@@ -23,5 +23,6 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\Files\*.jpg" Link="Files\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Files\*.pdf" Link="Files\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

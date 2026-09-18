@@ -56,6 +56,11 @@ public sealed class ArchiveImageItem : ObservableObject
     public required string FilePath { get; init; }
     public required string FileName { get; init; }
     public required string RelativeOutputPath { get; init; }
+    public string? PdfSourcePath { get; init; }
+    public int PdfPageNumber { get; init; }
+    public double PdfWidthPoints { get; init; }
+    public double PdfHeightPoints { get; init; }
+    public bool IsPdfPage => !string.IsNullOrWhiteSpace(PdfSourcePath) && PdfPageNumber > 0;
     public int PixelWidth { get; init; }
     public int PixelHeight { get; init; }
     public double DpiX { get; init; }
@@ -84,13 +89,13 @@ public sealed class ArchiveImageItem : ObservableObject
     public bool CanUndoManualEdit => UndoHistory.Count > 0;
     public bool CanRedoManualEdit => RedoHistory.Count > 0;
 
-    public MaskBuffer? CreateManualProtectionMask() => ManualProtectionPixels is null
+    public MaskBuffer? CreateManualProtectionMask() => ManualProtectionPixels is null || Analysis is null
         ? null
-        : new MaskBuffer(PixelWidth, PixelHeight, (byte[])ManualProtectionPixels.Clone());
+        : new MaskBuffer(Analysis.Width, Analysis.Height, (byte[])ManualProtectionPixels.Clone());
 
-    public MaskBuffer? CreateManualRemovalMask() => ManualRemovalPixels is null
+    public MaskBuffer? CreateManualRemovalMask() => ManualRemovalPixels is null || Analysis is null
         ? null
-        : new MaskBuffer(PixelWidth, PixelHeight, (byte[])ManualRemovalPixels.Clone());
+        : new MaskBuffer(Analysis.Width, Analysis.Height, (byte[])ManualRemovalPixels.Clone());
 
     public IReadOnlyList<ManualPixelChange> ActiveCloneStamps => CloneStampHistory;
 
@@ -157,7 +162,7 @@ public sealed class ArchiveImageItem : ObservableObject
     public BitmapSource? RepairedPreview { get => _repairedPreview; set => SetProperty(ref _repairedPreview, value); }
     public BitmapSource? MaskPreview { get => _maskPreview; set => SetProperty(ref _maskPreview, value); }
 
-    public string DimensionsText => $"{PixelWidth} × {PixelHeight} · {DpiX:0} DPI";
+    public string DimensionsText => IsPdfPage ? $"第 {PdfPageNumber} 页 · {PixelWidth} × {PixelHeight} · {DpiX:0} DPI" : $"{PixelWidth} × {PixelHeight} · {DpiX:0} DPI";
 
     public void CopyBoundaryFrom(CleanupSettings source)
     {

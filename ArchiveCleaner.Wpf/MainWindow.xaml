@@ -65,11 +65,37 @@
 
         <Border Grid.Row="0" Background="#263136" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Border Grid.Column="0" Width="24" Height="24" Margin="14,0,10,0" BorderBrush="#73B9AE" BorderThickness="1" VerticalAlignment="Center"><TextBlock Text="净" Foreground="#A8DDD5" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
                 <TextBlock Grid.Column="1" Text="档案净页" Foreground="White" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="2" Text="{Binding BatchName, StringFormat=  ·  {0}}" Foreground="#AEB8BC" VerticalAlignment="Center" Margin="10,0,0,0" />
-                <StackPanel Grid.Column="3" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                <Button Grid.Column="3" Content="⚙ 设置" Foreground="White" Background="Transparent" BorderThickness="0"
+                        Padding="12,0" Height="32" VerticalAlignment="Center" Cursor="Hand"
+                        Command="{Binding OpenSettingsCommand}" ToolTip="打开应用设置"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="Foreground" Value="#AEB8BC" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Background" Value="#364349" />
+                                    <Setter Property="Foreground" Value="White" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <StackPanel Grid.Column="4" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                     <Button Style="{StaticResource TitleBarButtonStyle}" Content="&#xE921;" Click="Minimize_Click" ToolTip="最小化窗口。" />
                     <Button Style="{StaticResource TitleBarButtonStyle}" Content="&#xE922;" Click="Maximize_Click" ToolTip="最大化或还原窗口。" />
                     <Button Style="{StaticResource TitleBarButtonStyle}" Content="&#xE8BB;" Click="Close_Click" ToolTip="关闭程序。未保存的设置方案不会自动写入文件。" />
@@ -163,7 +189,7 @@
                                     <Border BorderBrush="#8EBEB7" BorderThickness="1" Background="#F0F7F6" CornerRadius="4" Margin="4,4,0,0" Padding="8,5"><DockPanel><TextBox DockPanel.Dock="Right" Style="{StaticResource NumericSettingTextBoxStyle}" Text="{Binding SelectedImage.BottomMarginMm, UpdateSourceTrigger=LostFocus, StringFormat=F1}" ToolTip="下侧候选范围的最大深度，单位为毫米。底部通常有页码，范围过大会增加误判风险；建议保证候选边界与页码之间留有明显空隙。" /><CheckBox Content="下侧" IsChecked="{Binding SelectedImage.CleanBottom}" Style="{StaticResource SettingsCheckBoxStyle}" VerticalAlignment="Center" ToolTip="开启后检查页面底部的黑边、扫描阴影、污点和折痕。页码会受到单独保护，不会因为位于候选范围内就直接删除。" /></DockPanel></Border>
                                 </UniformGrid>
                                 <Button Content="应用边界到全部图片" Click="ApplyBoundaryToAll_Click" HorizontalAlignment="Right" Margin="0,10,0,0" ToolTip="将当前选中图片的四边启用状态和范围值复制到任务队列中的所有图片，并保存为下次默认边界。" />
-                                <DockPanel Margin="0,8,0,0"><CheckBox DockPanel.Dock="Right" Style="{StaticResource SwitchCheckBoxStyle}" IsChecked="{Binding Settings.ShowCandidateGuides, Mode=TwoWay}" ToolTip="显示或隐藏四边候选范围线和拖动块；隐藏时不会影响检测范围数值。" /><TextBlock Text="显示候选边界" VerticalAlignment="Center" /></DockPanel>
+                                <DockPanel Margin="0,8,0,0"><CheckBox DockPanel.Dock="Right" Style="{StaticResource SwitchCheckBoxStyle}" IsChecked="{Binding Settings.ShowCandidateGuides, Mode=TwoWay}" ToolTip="显示或隐藏四边候选范围线和拖动块；隐藏时不会影响检测范围数值。" Cursor="Hand" /><TextBlock Text="显示候选边界" VerticalAlignment="Center" /></DockPanel>
                             </StackPanel></Border>
 
                             <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="15,12"><StackPanel>

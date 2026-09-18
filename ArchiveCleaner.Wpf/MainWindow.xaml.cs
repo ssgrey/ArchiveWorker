@@ -170,7 +170,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "选择档案扫描图片",
-            Filter = "支持的图片|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp|JPEG 图片|*.jpg;*.jpeg|TIFF 图片|*.tif;*.tiff|PNG 图片|*.png|所有文件|*.*",
+            Filter = "支持的图片和 PDF|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.pdf|PDF 文档|*.pdf|支持的图片|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp|所有文件|*.*",
             Multiselect = true,
             CheckFileExists = true
         };
@@ -1076,9 +1076,9 @@ public partial class MainWindow : Window
         }
 
         _manualStart = start;
-        _manualConstraint = (Keyboard.Modifiers & ModifierKeys.Shift) != 0
+        _manualConstraint = Keyboard.IsKeyDown(_viewModel.HorizontalAssistKey)
             ? ManualConstraint.Horizontal
-            : (Keyboard.Modifiers & ModifierKeys.Control) != 0
+            : Keyboard.IsKeyDown(_viewModel.VerticalAssistKey)
                 ? ManualConstraint.Vertical
                 : ManualConstraint.None;
         _manualPoints.Clear();

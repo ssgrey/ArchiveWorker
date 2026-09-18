@@ -178,22 +178,52 @@ public sealed class DocumentCleanupEngine : IDocumentCleanupEngine
             ? new List<string>()
             : analysis.Regions.Where(region => region.Status == RegionStatus.AutoRemove).Select(region => region.Id).ToList();
 
+        // Collect all approved NeedsReview regions
+        var approvedRegions = new List<DefectRegion>();
         foreach (var region in analysis.Regions.Where(region => !decisions.DisableAutomaticRepair && region.Status == RegionStatus.NeedsReview))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!decisions.TryGetDecision(region.Id, out var decision) || decision == ReviewDecision.Keep) continue;
-            appliedIds.Add(region.Id);
-            var rectangle = region.Bounds;
-            var padding = DetectionParameters.Create(analysis.Settings, analysis.DpiX, analysis.DpiY).MaskExpansion;
-            var left = Math.Max(0, rectangle.X - padding);
-            var top = Math.Max(0, rectangle.Y - padding);
-            var right = Math.Min(analysis.Width, rectangle.Right + padding);
-            var bottom = Math.Min(analysis.Height, rectangle.Bottom + padding);
-            for (var y = top; y < bottom; y++)
-            for (var x = left; x < right; x++)
+            if (decisions.TryGetDecision(region.Id, out var decision) && decision == ReviewDecision.Remove)
             {
-                var index = y * analysis.Width + x;
-                if (analysis.DefectMask.Pixels[index] != 0) finalPixels[index] = 255;
+                approvedRegions.Add(region);
+                appliedIds.Add(region.Id);
+            }
+        }
+
+        // If all NeedsReview regions are approved, add the entire ReviewMask
+        var allNeedsReviewRegions = analysis.Regions.Where(r => r.Status == RegionStatus.NeedsReview).ToList();
+        if (approvedRegions.Count == allNeedsReviewRegions.Count && approvedRegions.Count > 0)
+        {
+            // All NeedsReview regions approved - add entire ReviewMask
+            for (var index = 0; index < finalPixels.Length; index++)
+            {
+                if (analysis.ReviewMask.Pixels[index] != 0)
+                {
+                    finalPixels[index] = 255;
+                }
+            }
+        }
+        else
+        {
+            // Partial approval - only add pixels within approved region bounds
+            foreach (var region in approvedRegions)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rectangle = region.Bounds;
+                var padding = DetectionParameters.Create(analysis.Settings, analysis.DpiX, analysis.DpiY).MaskExpansion;
+                var left = Math.Max(0, rectangle.X - padding);
+                var top = Math.Max(0, rectangle.Y - padding);
+                var right = Math.Min(analysis.Width, rectangle.Right + padding);
+                var bottom = Math.Min(analysis.Height, rectangle.Bottom + padding);
+
+                for (var y = top; y < bottom; y++)
+                for (var x = left; x < right; x++)
+                {
+                    var index = y * analysis.Width + x;
+                    if (analysis.DefectMask.Pixels[index] != 0 || analysis.ReviewMask.Pixels[index] != 0)
+                    {
+                        finalPixels[index] = 255;
+                    }
+                }
             }
         }
 
@@ -207,7 +237,10 @@ public sealed class DocumentCleanupEngine : IDocumentCleanupEngine
     {
         if (manualMask is null) return;
         if (manualMask.Width != width || manualMask.Height != height)
-            throw new CleanupValidationException("人工修正掩膜尺寸与当前图片不一致，请清除后重新标记。");
+        {
+            // Silently skip mismatched manual masks - they're from a previous analysis with different dimensions
+            return;
+        }
 
         for (var index = 0; index < finalPixels.Length; index++)
         {

@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows.Media.Imaging;
 using ArchiveCleaner.Wpf.Models;
 using ArchiveCleaner.Core.Contracts;
+using ArchiveCleaner.Core.Pdf;
 using System.Windows.Media;
 
 namespace ArchiveCleaner.Wpf.Services;
@@ -12,6 +13,7 @@ public sealed class ImageCatalogService
     {
         ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"
     };
+    private readonly PdfPageService _pdfPages = new();
 
     public CatalogLoadResult LoadDirectoryTree(string directory, string? relativeOutputPrefix = null)
     {
@@ -51,7 +53,7 @@ public sealed class ImageCatalogService
         try
         {
             files = Directory.EnumerateFiles(directory)
-                .Where(IsSupportedImage)
+                .Where(IsSupportedFile)
                 .OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
             directories = Directory.EnumerateDirectories(directory)
@@ -77,12 +79,28 @@ public sealed class ImageCatalogService
                 var relativePath = Path.GetRelativePath(root, file);
                 if (!string.IsNullOrWhiteSpace(relativeOutputPrefix))
                     relativePath = Path.Combine(relativeOutputPrefix, relativePath);
-                var item = CreateItem(file, relativePath);
-                images.Add(item);
-                folder.AddChild(new ImageTreeNode(item));
+                if (IsPdf(file))
+                {
+                    var pdfFolder = new FolderTreeNode(Path.GetFileName(file), file, isVirtual: true);
+                    var pages = _pdfPages.GetPages(file);
+                    foreach (var page in pages)
+                    {
+                        var rendered = _pdfPages.RenderPageToFile(file, page.PageNumber);
+                        var item = CreatePdfPageItem(file, page, rendered, Path.Combine(relativePath, $"第{page.PageNumber:000}页.png"));
+                        images.Add(item);
+                        pdfFolder.AddChild(new ImageTreeNode(item));
+                    }
+                    folder.AddChild(pdfFolder);
+                }
+                else
+                {
+                    var item = CreateItem(file, relativePath);
+                    images.Add(item);
+                    folder.AddChild(new ImageTreeNode(item));
+                }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or
-                                               System.Runtime.InteropServices.ExternalException or ArgumentException or FormatException)
+                                               InvalidDataException or InvalidOperationException or System.Runtime.InteropServices.ExternalException or ArgumentException or FormatException)
             {
                 skippedFiles++;
             }
@@ -113,6 +131,37 @@ public sealed class ImageCatalogService
     {
         return SupportedExtensions.Contains(Path.GetExtension(filePath));
     }
+
+    public bool IsSupportedFile(string filePath) => IsSupportedImage(filePath) || IsPdf(filePath);
+
+    public BitmapSource LoadPreview(ArchiveImageItem item) => LoadPreview(item.FilePath);
+
+    public IReadOnlyList<ArchiveImageItem> CreatePdfPages(string pdfPath, string relativeOutputPrefix)
+    {
+        var pages = _pdfPages.GetPages(pdfPath);
+        return pages.Select(page => CreatePdfPageItem(
+            pdfPath,
+            page,
+            _pdfPages.RenderPageToFile(pdfPath, page.PageNumber),
+            Path.Combine(relativeOutputPrefix, $"第{page.PageNumber:000}页.png"))).ToArray();
+    }
+
+    private ArchiveImageItem CreatePdfPageItem(string pdfPath, PdfPageInfo page, string renderedPath, string relativeOutputPath) => new()
+    {
+        FilePath = renderedPath,
+        FileName = $"第 {page.PageNumber} 页",
+        RelativeOutputPath = relativeOutputPath,
+        PdfSourcePath = Path.GetFullPath(pdfPath),
+        PdfPageNumber = page.PageNumber,
+        PdfWidthPoints = page.WidthPoints,
+        PdfHeightPoints = page.HeightPoints,
+        PixelWidth = page.PixelWidth,
+        PixelHeight = page.PixelHeight,
+        DpiX = page.DpiX,
+        DpiY = page.DpiY
+    };
+
+    private static bool IsPdf(string filePath) => Path.GetExtension(filePath).Equals(".pdf", StringComparison.OrdinalIgnoreCase);
 
     public BitmapSource CreateBitmapSource(ImageBuffer image)
     {

@@ -102,7 +102,7 @@ public static class ManualMaskEditor
         {
             var before = GetState(protection, removal, index);
             var afterState = getAfterState(index);
-            if (afterState == RemovalState && (before & ProtectedState) != 0) continue;
+            // Allow manual edits to override previous states - user's latest action wins
             if (before == afterState) continue;
             changedIndices.Add(index);
             beforeStates.Add(before);

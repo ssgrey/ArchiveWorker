@@ -3,23 +3,20 @@ using System.IO;
 using System.ComponentModel;
 using System.Windows.Media.Imaging;
 using System.Windows.Media;
-using System.Windows.Input;
 using ArchiveCleaner.Core.Audit;
 using ArchiveCleaner.Core.Batch;
 using ArchiveCleaner.Core.Contracts;
 using ArchiveCleaner.Core.Detection;
 using ArchiveCleaner.Core.Imaging;
+using ArchiveCleaner.Core.Pdf;
 using ArchiveCleaner.Wpf.Models;
 using ArchiveCleaner.Wpf.Services;
-using ArchiveCleaner.Wpf.Views;
 
 namespace ArchiveCleaner.Wpf.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
     private readonly ImageCatalogService _imageCatalog = new();
-    private readonly SettingsManager _settingsManager = new();
-    private AppSettings _currentSettings;
     private ArchiveImageItem? _selectedImage;
     private BitmapSource? _selectedPreview;
     private ReviewRegionItem? _selectedReviewRegion;
@@ -39,7 +36,6 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
-        _currentSettings = _settingsManager.Load();
         Settings.PropertyChanged += Settings_PropertyChanged;
         var sampleDirectory = Path.Combine(AppContext.BaseDirectory, "Files");
         if (Directory.Exists(sampleDirectory)) LoadDirectory(sampleDirectory, replaceExisting: true);
@@ -49,17 +45,13 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<CatalogTreeNode> TreeRoots { get; } = [];
     public CleanupSettings Settings { get; } = new();
 
-    public ICommand OpenSettingsCommand => new RelayCommand(OpenSettings);
-    public Key HorizontalAssistKey => _currentSettings.HorizontalAssistKey;
-    public Key VerticalAssistKey => _currentSettings.VerticalAssistKey;
-
     public ArchiveImageItem? SelectedImage
     {
         get => _selectedImage;
         set
         {
             if (!SetProperty(ref _selectedImage, value)) return;
-            SelectedPreview = value is null ? null : _imageCatalog.LoadPreview(value.FilePath);
+            SelectedPreview = value is null ? null : _imageCatalog.LoadPreview(value);
             SelectedReviewRegion = value?.ReviewRegions.FirstOrDefault(region => !value.Decisions.ContainsKey(region.Id)) ?? value?.ReviewRegions.FirstOrDefault();
             NotifySelectedPreviewChanged();
             UpdateRiskForSelected();
@@ -194,9 +186,14 @@ public sealed class MainViewModel : ObservableObject
     {
         var existingPaths = Images.Select(item => item.FilePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var standaloneRoot = TreeRoots.OfType<FolderTreeNode>().FirstOrDefault(node => node.IsVirtual);
-        foreach (var filePath in filePaths.Where(_imageCatalog.IsSupportedImage))
+        foreach (var filePath in filePaths.Where(_imageCatalog.IsSupportedFile))
         {
             var fullPath = Path.GetFullPath(filePath);
+            if (Path.GetExtension(fullPath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                AddPdfFile(fullPath);
+                continue;
+            }
             if (!existingPaths.Add(fullPath)) continue;
             var relativePath = CreateUniqueStandalonePath(fullPath);
             var item = _imageCatalog.CreateItem(fullPath, relativePath);
@@ -207,6 +204,21 @@ public sealed class MainViewModel : ObservableObject
         }
         if (SelectedImage is null) SelectedImage = Images.FirstOrDefault();
         NotifyCollectionSummary();
+    }
+
+    private void AddPdfFile(string pdfPath)
+    {
+        if (Images.Any(item => item.PdfSourcePath?.Equals(pdfPath, StringComparison.OrdinalIgnoreCase) == true)) return;
+        var pdfRoot = new FolderTreeNode(Path.GetFileName(pdfPath), pdfPath, isVirtual: true);
+        var pages = _imageCatalog.CreatePdfPages(pdfPath, CreateUniqueStandalonePath(pdfPath));
+        foreach (var item in pages)
+        {
+            item.CopyBoundaryFrom(Settings);
+            Images.Add(item);
+            pdfRoot.AddChild(new ImageTreeNode(item));
+        }
+        TreeRoots.Add(pdfRoot);
+        SubscribeToRoot(pdfRoot);
     }
 
     public void LoadDirectory(string directory, bool replaceExisting)
@@ -772,17 +784,19 @@ public sealed class MainViewModel : ObservableObject
         if (selectedItems.Count == 0) throw new CleanupValidationException("请先勾选至少一张需要导出的图片。");
         if (IsBusy) throw new InvalidOperationException("当前已有任务正在运行。");
         var settings = Settings.CreateSnapshot();
+        ValidatePdfOutputDirectory(selectedItems, OutputDirectory);
         IsBusy = true;
         ProcessedCount = 0;
         ProgressPercent = 0;
         try
         {
-            var decisions = selectedItems.ToDictionary(item => item.FilePath, CreateDecisionSet, StringComparer.OrdinalIgnoreCase);
-            var cloneStamps = selectedItems.ToDictionary(item => item.FilePath,
+            var decisions = selectedItems.ToDictionary(item => Path.GetFullPath(item.FilePath), CreateDecisionSet, StringComparer.OrdinalIgnoreCase);
+            var cloneStamps = selectedItems.ToDictionary(item => Path.GetFullPath(item.FilePath),
                 item => (IReadOnlyList<ManualPixelChange>)item.ActiveCloneStamps.ToArray(), StringComparer.OrdinalIgnoreCase);
-            var relativeOutputPaths = selectedItems.ToDictionary(item => item.FilePath,
-                item => item.RelativeOutputPath, StringComparer.OrdinalIgnoreCase);
-            var settingsByFile = selectedItems.ToDictionary(item => item.FilePath,
+            var relativeOutputPaths = selectedItems.ToDictionary(item => Path.GetFullPath(item.FilePath),
+                item => item.IsPdfPage ? GetPdfStagingRelativePath(item) : item.RelativeOutputPath,
+                StringComparer.OrdinalIgnoreCase);
+            var settingsByFile = selectedItems.ToDictionary(item => Path.GetFullPath(item.FilePath),
                 item => item.ApplyBoundary(settings), StringComparer.OrdinalIgnoreCase);
             var progress = new Progress<BatchProgress>(value =>
             {
@@ -797,6 +811,7 @@ public sealed class MainViewModel : ObservableObject
                 Settings = settings, DecisionsByFile = decisions, CloneStampsByFile = cloneStamps,
                 RelativeOutputPathsByFile = relativeOutputPaths, SettingsByFile = settingsByFile
             }, progress, cancellationToken);
+            await AssemblePdfOutputsAsync(Images, selectedItems, report, cancellationToken);
             EngineStatus = $"批量处理完成：成功 {report.SuccessCount}，失败 {report.FailedCount}";
             ProgressPercent = 100;
             return report;
@@ -804,13 +819,152 @@ public sealed class MainViewModel : ObservableObject
         finally { IsBusy = false; }
     }
 
+    private static async Task AssemblePdfOutputsAsync(IReadOnlyCollection<ArchiveImageItem> allItems, IReadOnlyCollection<ArchiveImageItem> selectedItems, BatchAuditReport report,
+        CancellationToken cancellationToken)
+    {
+        var selectedSet = selectedItems.ToHashSet();
+        var pdfGroups = allItems.Where(item => item.IsPdfPage && selectedSet.Any(selected =>
+                selected.IsPdfPage && string.Equals(selected.PdfSourcePath, item.PdfSourcePath, StringComparison.OrdinalIgnoreCase)))
+            .GroupBy(item => item.PdfSourcePath!, StringComparer.OrdinalIgnoreCase);
+        foreach (var group in pdfGroups)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pages = group.OrderBy(item => item.PdfPageNumber).ToArray();
+            var records = pages.Select(page => report.Pages.FirstOrDefault(record => record.SourcePath.Equals(Path.GetFullPath(page.FilePath), StringComparison.OrdinalIgnoreCase))).ToArray();
+            var missingSelectedPage = pages.Select((page, index) => (page, record: records[index]))
+                .FirstOrDefault(item => selectedSet.Contains(item.page) && item.record?.Status != BatchItemStatus.Success);
+            if (missingSelectedPage.page is not null)
+            {
+                var status = missingSelectedPage.record?.Status.ToString() ?? "无处理记录";
+                throw new InvalidOperationException($"PDF“{Path.GetFileName(group.Key)}”第 {missingSelectedPage.page.PdfPageNumber} 页未成功处理（{status}），已取消汇编，避免输出未处理结果。");
+            }
+            var outputPagePaths = pages.Select((page, index) => records[index]?.Status == BatchItemStatus.Success ? records[index]!.OutputPath! : page.FilePath).ToArray();
+            var outputRelative = Path.GetDirectoryName(pages[0].RelativeOutputPath) ?? Path.GetFileName(pages[0].PdfSourcePath!);
+            var outputPath = Path.Combine(report.OutputDirectory, Path.ChangeExtension(outputRelative, ".pdf"));
+            ValidatePdfOutputPath(group.Key, outputPath);
+            if (Directory.Exists(outputPath))
+            {
+                if (Directory.EnumerateFileSystemEntries(outputPath).Any())
+                    throw new CleanupValidationException($"PDF 输出路径被同名文件夹占用：{outputPath}。请更换输出目录或移除该文件夹。");
+                Directory.Delete(outputPath);
+            }
+            var pageImages = new List<(ImageBuffer Image, double WidthPoints, double HeightPoints)>();
+            try
+            {
+                // 创建调试目录，保存PDF每页处理后的PNG
+                var pdfFileName = Path.GetFileNameWithoutExtension(group.Key);
+                var debugDirectory = Path.Combine(report.OutputDirectory, $”_debug_pdf_pages_{pdfFileName}”);
+                Directory.CreateDirectory(debugDirectory);
+
+                for (var i = 0; i < pages.Length; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var image = ImageFileCodec.Load(outputPagePaths[i], pages[i].DpiX, pages[i].DpiY);
+                    pageImages.Add((image, pages[i].PdfWidthPoints, pages[i].PdfHeightPoints));
+
+                    // 调试：保存每页处理后的图片
+                    var debugPath = Path.Combine(debugDirectory, $”page_{pages[i].PdfPageNumber:000}_processed.png”);
+                    ImageFileCodec.Save(image, debugPath, ImageOutputFormat.Png, 95, preserveDpi: true);
+
+                    // 调试：记录使用的源路径
+                    var debugInfo = $”Page {pages[i].PdfPageNumber}\n” +
+                                   $”FilePath: {pages[i].FilePath}\n” +
+                                   $”OutputPath used: {outputPagePaths[i]}\n” +
+                                   $”Record found: {records[i] != null}\n” +
+                                   $”Record status: {records[i]?.Status}\n” +
+                                   $”Record OutputPath: {records[i]?.OutputPath}\n”;
+                    File.WriteAllText(Path.Combine(debugDirectory, $”page_{pages[i].PdfPageNumber:000}_info.txt”), debugInfo);
+                }
+                try
+                {
+                    await Task.Run(() => new PdfDocumentWriter().Write(outputPath, pageImages, group.Key), cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    throw new InvalidOperationException(“PDF assembly failed” + exception.Message, exception);
+                }
+            }
+            finally
+            {
+                foreach (var path in records.Where(record => record?.Status == BatchItemStatus.Success).Select(record => record!.OutputPath!))
+                {
+                    try { if (File.Exists(path)) File.Delete(path); } catch { }
+                }
+                TryDeleteEmptyPdfStagingDirectories(records);
+            }
+        }
+    }
+
+    private static string GetPdfStagingRelativePath(ArchiveImageItem item)
+    {
+        var source = item.PdfSourcePath ?? throw new InvalidOperationException("PDF 页面缺少源文件路径。");
+        var token = StringComparer.OrdinalIgnoreCase.GetHashCode(Path.GetFullPath(source)).ToString("X8");
+        return Path.Combine(".archiveworker-pdf-staging", token, $"第{item.PdfPageNumber:000}.png");
+    }
+
+    private static void TryDeleteEmptyPdfStagingDirectories(IEnumerable<PageAuditRecord?> records)
+    {
+        var directories = records.Where(record => record?.Status == BatchItemStatus.Success)
+            .Select(record => Path.GetDirectoryName(record!.OutputPath!))
+            .Where(path => path is not null)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        foreach (var directory in directories)
+        {
+            try
+            {
+                if (directory is not null && Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any())
+                    Directory.Delete(directory);
+                var parent = directory is null ? null : Directory.GetParent(directory)?.FullName;
+                if (parent is not null && Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any()) Directory.Delete(parent);
+            }
+            catch { }
+        }
+    }
+
     public IReadOnlyList<string> GetPlannedOutputPaths(string outputDirectory)
     {
         var settings = Settings.CreateSnapshot();
-        return GetSelectedImages()
-            .Select(item => SafeImageWriter.GetDestinationPath(
-                item.FilePath, outputDirectory, settings, item.RelativeOutputPath))
+        var selectedItems = GetSelectedImages();
+        ValidatePdfOutputDirectory(selectedItems, outputDirectory);
+        return selectedItems
+            .GroupBy(item => item.IsPdfPage ? item.PdfSourcePath! : item.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var item = group.First();
+                if (item.IsPdfPage)
+                {
+                    var relativePdf = Path.ChangeExtension(Path.GetDirectoryName(item.RelativeOutputPath) ?? Path.GetFileName(item.PdfSourcePath!), ".pdf");
+                    return Path.GetFullPath(Path.Combine(outputDirectory, relativePdf));
+                }
+                return SafeImageWriter.GetDestinationPath(item.FilePath, outputDirectory, settings, item.RelativeOutputPath);
+            })
             .ToArray();
+    }
+
+    private static void ValidatePdfOutputDirectory(IReadOnlyCollection<ArchiveImageItem> selectedItems, string outputDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(outputDirectory)) return;
+        var outputFullPath = Path.GetFullPath(outputDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var pdf in selectedItems.Where(item => item.IsPdfPage).GroupBy(item => item.PdfSourcePath!, StringComparer.OrdinalIgnoreCase))
+        {
+            var sourcePdf = Path.GetFullPath(pdf.Key);
+            var outputRelative = Path.GetDirectoryName(pdf.First().RelativeOutputPath) ?? Path.GetFileName(sourcePdf);
+            var plannedPdf = Path.GetFullPath(Path.Combine(outputFullPath, Path.ChangeExtension(outputRelative, ".pdf")));
+            ValidatePdfOutputPath(sourcePdf, plannedPdf);
+        }
+    }
+
+    private static void ValidatePdfOutputPath(string sourcePdfPath, string outputPdfPath)
+    {
+        var sourcePdf = Path.GetFullPath(sourcePdfPath);
+        var outputPdf = Path.GetFullPath(outputPdfPath);
+        var sourceDirectory = Path.GetDirectoryName(sourcePdf)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var outputDirectory = Path.GetDirectoryName(outputPdf)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (outputPdf.Equals(sourcePdf, StringComparison.OrdinalIgnoreCase) ||
+            (sourceDirectory is not null && outputDirectory is not null &&
+             outputDirectory.Equals(sourceDirectory, StringComparison.OrdinalIgnoreCase)))
+            throw new CleanupValidationException($"PDF 输出不能覆盖源文件或写入源文件所在目录：{sourcePdf}");
     }
 
     private async Task AnalyzeItemAsync(ArchiveImageItem item, CleanupSettingsSnapshot settings, CancellationToken cancellationToken)
@@ -1107,21 +1261,5 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(CanRunSelectedBatch));
         OnPropertyChanged(nameof(UnresolvedReviewRegionCount));
         OnPropertyChanged(nameof(CanRemoveAllReviewRegions));
-    }
-
-    private void OpenSettings()
-    {
-        var settingsWindow = new SettingsWindow
-        {
-            Owner = System.Windows.Application.Current.MainWindow
-        };
-        settingsWindow.DataContext = new SettingsViewModel(_settingsManager, settingsWindow);
-
-        if (settingsWindow.ShowDialog() == true)
-        {
-            _currentSettings = _settingsManager.Load();
-            OnPropertyChanged(nameof(HorizontalAssistKey));
-            OnPropertyChanged(nameof(VerticalAssistKey));
-        }
     }
 }

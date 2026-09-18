@@ -22,6 +22,7 @@ public sealed class BatchRequest
     public IReadOnlyDictionary<string, string> RelativeOutputPathsByFile { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, ReviewDecisionSet> DecisionsByFile { get; init; } = new Dictionary<string, ReviewDecisionSet>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, IReadOnlyList<ManualPixelChange>> CloneStampsByFile { get; init; } = new Dictionary<string, IReadOnlyList<ManualPixelChange>>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, CleanupAnalysisResult> AnalysesByFile { get; init; } = new Dictionary<string, CleanupAnalysisResult>(StringComparer.OrdinalIgnoreCase);
     public int MaxDegreeOfParallelism { get; init; } = Math.Min(4, Math.Max(1, Environment.ProcessorCount / 2));
 }
 
@@ -104,7 +105,9 @@ public sealed class BatchProcessor
                 : batch.Settings;
             settings.Validate();
             var analysis = preparedAnalysis ?? await _engineFactory().AnalyzeAsync(new CleanupRequest(sourcePath, sourceDpiX, sourceDpiY, settings), null, cancellationToken);
-            batch.DecisionsByFile.TryGetValue(Path.GetFullPath(sourcePath), out var decisions);
+            var lookupKey = Path.GetFullPath(sourcePath);
+            batch.DecisionsByFile.TryGetValue(lookupKey, out var decisions);
+
             var repair = await _engineFactory().RepairAsync(analysis, decisions ?? new ReviewDecisionSet(), cancellationToken);
             if (batch.CloneStampsByFile.TryGetValue(Path.GetFullPath(sourcePath), out var cloneStamps))
                 foreach (var stamp in cloneStamps) ManualPixelEditor.ApplyChange(repair.RepairedImage.Pixels, stamp, useAfter: true);
@@ -147,6 +150,13 @@ public sealed class BatchProcessor
         BatchRequest request, IProgress<BatchProgress>? progress, int progressTotal, CancellationToken cancellationToken)
     {
         var analyses = new ConcurrentDictionary<string, CleanupAnalysisResult>(StringComparer.OrdinalIgnoreCase);
+
+        // First, add all provided analyses
+        foreach (var kvp in request.AnalysesByFile)
+        {
+            analyses[kvp.Key] = kvp.Value;
+        }
+
         var completed = 0;
         await Parallel.ForEachAsync(request.SourceFiles, new ParallelOptions
         {
@@ -156,22 +166,32 @@ public sealed class BatchProcessor
         {
             try
             {
+                var fullPath = Path.GetFullPath(file);
+
+                // Skip if analysis already provided
+                if (analyses.ContainsKey(fullPath))
+                {
+                    Interlocked.Increment(ref completed);
+                    progress?.Report(new BatchProgress(completed, progressTotal, Path.GetFileName(file), null, "使用已有分析"));
+                    return;
+                }
+
                 using var metadata = Image.FromFile(file);
-                var settings = request.SettingsByFile.TryGetValue(Path.GetFullPath(file), out var perFileSettings)
+                var settings = request.SettingsByFile.TryGetValue(fullPath, out var perFileSettings)
                     ? perFileSettings
                     : request.Settings;
                 settings.Validate();
                 var analysis = await _engineFactory().AnalyzeAsync(
                     new CleanupRequest(file, metadata.HorizontalResolution, metadata.VerticalResolution, settings), null, token);
-                analyses[Path.GetFullPath(file)] = analysis;
-                var count = Interlocked.Increment(ref completed);
-                progress?.Report(new BatchProgress(count, progressTotal, Path.GetFileName(file), null, "第一遍检测完成"));
+                analyses[fullPath] = analysis;
+                Interlocked.Increment(ref completed);
+                progress?.Report(new BatchProgress(completed, progressTotal, Path.GetFileName(file), null, "第一遍检测完成"));
             }
             catch (OperationCanceledException) { throw; }
             catch
             {
-                var count = Interlocked.Increment(ref completed);
-                progress?.Report(new BatchProgress(count, progressTotal, Path.GetFileName(file), BatchItemStatus.Failed, "第一遍检测失败"));
+                Interlocked.Increment(ref completed);
+                progress?.Report(new BatchProgress(completed, progressTotal, Path.GetFileName(file), BatchItemStatus.Failed, "第一遍检测失败"));
             }
         });
 
