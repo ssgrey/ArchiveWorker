@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Encodings.Web;
@@ -29,7 +30,7 @@ public partial class MainWindow : Window
     private enum PreviewMode { SideBySide, Compare, MaskOnly }
     private enum ManualConstraint { None, Horizontal, Vertical }
 
-    private readonly MainViewModel _viewModel = new();
+    private readonly MainViewModel _viewModel = new(loadSamples: false);
     private readonly SettingsPersistenceService _settingsPersistence = new();
     private CancellationTokenSource? _operationCancellation;
     private readonly List<System.Windows.Point> _manualPoints = [];
@@ -76,7 +77,21 @@ public partial class MainWindow : Window
         if (_observedSelectedImage is not null) _observedSelectedImage.PropertyChanged += SelectedImage_PropertyChanged;
         SourceInitialized += MainWindow_SourceInitialized;
         Closing += MainWindow_Closing;
+#if DEBUG
+        Loaded += MainWindow_Loaded;
+#endif
     }
+
+#if DEBUG
+    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= MainWindow_Loaded;
+        var samples = Path.Combine(AppContext.BaseDirectory, "Files");
+        if (_viewModel.Images.Count == 0 && Directory.Exists(samples))
+            await RunCancelableAsync(token => _viewModel.LoadDirectoriesAsync([samples], true, token),
+                "已取消加载，保留原来的图片列表", "示例文件加载失败");
+    }
+#endif
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -165,11 +180,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private void AddFiles_Click(object sender, RoutedEventArgs e)
+    private async void AddFiles_Click(object sender, RoutedEventArgs e)
     {
+        if (!_viewModel.CanLoadFiles) return;
         var dialog = new OpenFileDialog
         {
-            Title = "选择档案扫描图片",
+            Title = "选择档案扫描图片或 PDF",
             Filter = "支持的图片和 PDF|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp;*.pdf|PDF 文档|*.pdf|支持的图片|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp|所有文件|*.*",
             Multiselect = true,
             CheckFileExists = true
@@ -180,18 +196,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        try
-        {
-            _viewModel.AddFiles(dialog.FileNames);
-        }
-        catch (Exception exception)
-        {
-            ShowError("部分图片无法读取", exception);
-        }
+        await RunCancelableAsync(token => _viewModel.AddFilesAsync(dialog.FileNames, token),
+            "已取消加载，保留原来的图片列表", "部分图片或 PDF 无法读取");
     }
 
-    private void OpenFolder_Click(object sender, RoutedEventArgs e)
+    private async void OpenFolder_Click(object sender, RoutedEventArgs e)
     {
+        if (!_viewModel.CanLoadFiles) return;
         var dialog = new OpenFolderDialog
         {
             Title = "选择档案扫描图片文件夹",
@@ -203,14 +214,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        try
-        {
-            _viewModel.LoadDirectories(dialog.FolderNames, replaceExisting: true);
-        }
-        catch (Exception exception)
-        {
-            ShowError("文件夹中的图片无法读取", exception);
-        }
+        await RunCancelableAsync(token => _viewModel.LoadDirectoriesAsync(dialog.FolderNames, true, token),
+            "已取消加载，保留原来的图片列表", "文件夹中的图片无法读取");
     }
 
     private async void SaveProfile_Click(object sender, RoutedEventArgs e)
@@ -291,9 +296,15 @@ public partial class MainWindow : Window
         _viewModel.EngineStatus = "已恢复全部系统默认参数；请重新生成预览";
     }
 
-    private void ApplyBoundaryToAll_Click(object sender, RoutedEventArgs e)
+    private void ApplyBoundaryToChecked_Click(object sender, RoutedEventArgs e)
     {
-        if (!_viewModel.ApplySelectedBoundaryToAll())
+        if (_viewModel.SelectedCount == 0)
+        {
+            MessageBox.Show(this, "请先在左侧目录中勾选至少一张图片。", "没有已勾选的图片", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!_viewModel.ApplySelectedBoundaryToChecked())
         {
             MessageBox.Show(this, "请先选择一张图片。", "没有选中的图片", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -302,11 +313,11 @@ public partial class MainWindow : Window
         try
         {
             _settingsPersistence.Save(_viewModel.Settings);
-            _viewModel.EngineStatus = $"已将 {_viewModel.SelectedImage?.FileName} 的四边边界应用到全部 {_viewModel.Images.Count} 张图片，并保存为默认值；请重新分析";
+            _viewModel.EngineStatus = $"已将 {_viewModel.SelectedImage?.FileName} 的四边边界应用到已勾选的 {_viewModel.SelectedCount} 张图片，并保存为默认值；请重新分析";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            _viewModel.EngineStatus = $"边界已应用到全部图片，但默认值保存失败：{exception.Message}";
+            _viewModel.EngineStatus = $"边界已应用到已勾选图片，但默认值保存失败：{exception.Message}";
         }
     }
 
@@ -380,9 +391,24 @@ public partial class MainWindow : Window
         try
         {
             var report = await _viewModel.ProcessBatchAsync(operation.Token);
-            MessageBox.Show(this,
-                $"结果导出完成。\n\n成功：{report.SuccessCount}\n失败：{report.FailedCount}\n输出目录：{report.OutputDirectory}",
-                "导出完成", MessageBoxButton.OK, report.FailedCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            var openOutputDirectory = MessageBox.Show(this,
+                $"结果导出完成。\n\n成功：{report.SuccessCount}\n失败：{report.FailedCount}\n输出目录：{report.OutputDirectory}\n\n是否打开输出目录？",
+                "导出完成", MessageBoxButton.YesNo, report.FailedCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            if (openOutputDirectory == MessageBoxResult.Yes)
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = report.OutputDirectory,
+                        UseShellExecute = true
+                    });
+                }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
+                {
+                    _viewModel.EngineStatus = $"结果导出完成，但无法打开输出目录：{exception.Message}";
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -602,6 +628,24 @@ public partial class MainWindow : Window
     }
     private void ZoomInPreview_Click(object sender, RoutedEventArgs e) => PreviewZoomSlider.Value = Math.Min(400, PreviewZoomSlider.Value + 25);
 
+    private void RotatePreview_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_viewModel.CanRotateSelected) return;
+        if (_viewModel.SelectedImage!.IsPdfPage)
+        {
+            _viewModel.RotateSelectedClockwise();
+            MessageBox.Show(this, "PDF图片节点不支持旋转", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        StopCandidateDrag();
+        ResetManualDrawingState();
+        _cloneSamplePoint = null;
+        _lastCrosshairPoint = null;
+        BrushCursorEllipse.Visibility = Visibility.Collapsed;
+        _cloneSampleCursorEllipse.Visibility = Visibility.Collapsed;
+        _viewModel.RotateSelectedClockwise();
+    }
+
     private void PreviewToolbarLayout_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (PreviewModeTools is null || PreviewZoomTools is null) return;
@@ -641,15 +685,15 @@ public partial class MainWindow : Window
         switch (_previewMode)
         {
             case PreviewMode.SideBySide:
-                SetFrameSize(AnalysisImageFrame, SideAnalysisScroll, item.PixelWidth, item.PixelHeight);
-                SetFrameSize(RepairedImageFrame, SideRepairedScroll, item.PixelWidth, item.PixelHeight);
+                SetFrameSize(AnalysisImageFrame, SideAnalysisScroll, item.DisplayWidth, item.DisplayHeight);
+                SetFrameSize(RepairedImageFrame, SideRepairedScroll, item.DisplayWidth, item.DisplayHeight);
                 break;
             case PreviewMode.Compare:
-                SetFrameSize(CompareImageFrame, CompareScroll, item.PixelWidth, item.PixelHeight);
+                SetFrameSize(CompareImageFrame, CompareScroll, item.DisplayWidth, item.DisplayHeight);
                 UpdateCompareClip();
                 break;
             case PreviewMode.MaskOnly:
-                SetFrameSize(MaskImageFrame, MaskScroll, item.PixelWidth, item.PixelHeight);
+                SetFrameSize(MaskImageFrame, MaskScroll, item.DisplayWidth, item.DisplayHeight);
                 break;
         }
         RedrawPreviewOverlays();
@@ -702,10 +746,10 @@ public partial class MainWindow : Window
     {
         canvas.Children.Clear();
         if (canvas.ActualWidth <= 0 || canvas.ActualHeight <= 0) return;
-        var dpiX = ImageGeometry.IsValidDpi(item.DpiX) ? item.DpiX : ImageGeometry.DefaultDpi;
-        var dpiY = ImageGeometry.IsValidDpi(item.DpiY) ? item.DpiY : ImageGeometry.DefaultDpi;
-        var scaleX = canvas.ActualWidth / item.PixelWidth;
-        var scaleY = canvas.ActualHeight / item.PixelHeight;
+        var dpiX = ImageGeometry.IsValidDpi(item.DisplayDpiX) ? item.DisplayDpiX : ImageGeometry.DefaultDpi;
+        var dpiY = ImageGeometry.IsValidDpi(item.DisplayDpiY) ? item.DisplayDpiY : ImageGeometry.DefaultDpi;
+        var scaleX = canvas.ActualWidth / item.DisplayWidth;
+        var scaleY = canvas.ActualHeight / item.DisplayHeight;
         var stripBrush = new SolidColorBrush(Color.FromArgb(205, 248, 250, 250));
         var tickBrush = new SolidColorBrush(Color.FromArgb(220, 61, 76, 81));
         const double horizontalStrip = 24;
@@ -797,11 +841,12 @@ public partial class MainWindow : Window
         foreach (var side in new[] { EdgeSide.Left, EdgeSide.Right, EdgeSide.Top, EdgeSide.Bottom })
         {
             if (!IsCandidateSideEnabled(side)) continue;
+            var displaySide = ImageRotation.MapSide(side, item.RotationQuarterTurns);
             var line = new Line { Stroke = lineBrush, StrokeThickness = 2, IsHitTestVisible = false };
             var handle = new ShapeRectangle
             {
                 Width = 12, Height = 12, Fill = lineBrush, Stroke = Brushes.White, StrokeThickness = 1,
-                Cursor = side is EdgeSide.Left or EdgeSide.Right ? System.Windows.Input.Cursors.SizeWE : System.Windows.Input.Cursors.SizeNS,
+                Cursor = displaySide is EdgeSide.Left or EdgeSide.Right ? System.Windows.Input.Cursors.SizeWE : System.Windows.Input.Cursors.SizeNS,
                 Tag = side
             };
             handle.MouseLeftButtonDown += CandidateHandle_MouseLeftButtonDown;
@@ -831,8 +876,8 @@ public partial class MainWindow : Window
         var dpiY = ImageGeometry.IsValidDpi(item.DpiY) ? item.DpiY : ImageGeometry.DefaultDpi;
         foreach (var canvas in new[] { AnalysisCandidateGuideCanvas, RepairedCandidateGuideCanvas })
         {
-            var sx = canvas.ActualWidth / item.PixelWidth;
-            var sy = canvas.ActualHeight / item.PixelHeight;
+            var sx = canvas.ActualWidth / item.DisplayWidth;
+            var sy = canvas.ActualHeight / item.DisplayHeight;
             foreach (var side in new[] { EdgeSide.Left, EdgeSide.Right, EdgeSide.Top, EdgeSide.Bottom })
             {
                 if (!_candidateLines.TryGetValue((canvas, side), out var line) || !_candidateHandles.TryGetValue((canvas, side), out var handle)) continue;
@@ -844,9 +889,10 @@ public partial class MainWindow : Window
                     _ => ImageGeometry.MillimetersToPixels(item.BottomMarginMm, dpiY, item.PixelHeight)
                 };
                 depth = Math.Min(depth, side is EdgeSide.Left or EdgeSide.Right ? item.PixelWidth / 2 : item.PixelHeight / 2);
-                var x = side == EdgeSide.Left ? depth * sx : side == EdgeSide.Right ? canvas.ActualWidth - depth * sx : 0;
-                var y = side == EdgeSide.Top ? depth * sy : side == EdgeSide.Bottom ? canvas.ActualHeight - depth * sy : 0;
-                if (side is EdgeSide.Left or EdgeSide.Right)
+                var displaySide = ImageRotation.MapSide(side, item.RotationQuarterTurns);
+                var x = displaySide == EdgeSide.Left ? depth * sx : displaySide == EdgeSide.Right ? canvas.ActualWidth - depth * sx : 0;
+                var y = displaySide == EdgeSide.Top ? depth * sy : displaySide == EdgeSide.Bottom ? canvas.ActualHeight - depth * sy : 0;
+                if (displaySide is EdgeSide.Left or EdgeSide.Right)
                 {
                     line.X1 = line.X2 = x; line.Y1 = 0; line.Y2 = canvas.ActualHeight;
                     Canvas.SetLeft(handle, x - handle.Width / 2); Canvas.SetTop(handle, 6);
@@ -870,12 +916,12 @@ public partial class MainWindow : Window
 
         var item = _viewModel.SelectedImage;
         if (item is null || ManualDrawingCanvas.ActualWidth <= 0 || ManualDrawingCanvas.ActualHeight <= 0) return;
-        var scaleX = ManualDrawingCanvas.ActualWidth / item.PixelWidth;
-        var scaleY = ManualDrawingCanvas.ActualHeight / item.PixelHeight;
+        var scaleX = ManualDrawingCanvas.ActualWidth / item.DisplayWidth;
+        var scaleY = ManualDrawingCanvas.ActualHeight / item.DisplayHeight;
         foreach (var stamp in item.ActiveCloneStamps)
         {
             if (stamp.TargetPoints.Count == 0) continue;
-            var points = stamp.TargetPoints.Select(point => new System.Windows.Point(point.X * scaleX, point.Y * scaleY)).ToArray();
+            var points = stamp.TargetPoints.Select(ToCanvasPoint).ToArray();
             var diameter = Math.Max(2, stamp.Diameter * ((scaleX + scaleY) / 2d));
             if (points.Length == 1)
             {
@@ -938,8 +984,12 @@ public partial class MainWindow : Window
             || e.LeftButton != MouseButtonState.Pressed) return;
         var item = _viewModel.SelectedImage;
         var point = e.GetPosition(_candidateDragCanvas);
-        var x = Math.Clamp(point.X, 0, _candidateDragCanvas.ActualWidth);
-        var y = Math.Clamp(point.Y, 0, _candidateDragCanvas.ActualHeight);
+        if (_candidateDragCanvas.ActualWidth <= 0 || _candidateDragCanvas.ActualHeight <= 0) return;
+        var (sourceX, sourceY) = ImageRotation.Map(
+            Math.Clamp(point.X / _candidateDragCanvas.ActualWidth, 0, 1),
+            Math.Clamp(point.Y / _candidateDragCanvas.ActualHeight, 0, 1), -item.RotationQuarterTurns);
+        var x = sourceX * _candidateDragCanvas.ActualWidth;
+        var y = sourceY * _candidateDragCanvas.ActualHeight;
         var dpiX = ImageGeometry.IsValidDpi(item.DpiX) ? item.DpiX : ImageGeometry.DefaultDpi;
         var dpiY = ImageGeometry.IsValidDpi(item.DpiY) ? item.DpiY : ImageGeometry.DefaultDpi;
         var side = _draggingCandidateSide.Value;
@@ -1163,27 +1213,33 @@ public partial class MainWindow : Window
     {
         var item = _viewModel.SelectedImage;
         if (item is null || ManualDrawingCanvas.ActualWidth <= 0 || ManualDrawingCanvas.ActualHeight <= 0) return [];
-        var scaleX = item.PixelWidth / ManualDrawingCanvas.ActualWidth;
-        var scaleY = item.PixelHeight / ManualDrawingCanvas.ActualHeight;
-        return _manualPoints.Select(point => new PixelPoint(
-            Math.Clamp((int)Math.Round(point.X * scaleX), 0, item.PixelWidth - 1),
-            Math.Clamp((int)Math.Round(point.Y * scaleY), 0, item.PixelHeight - 1))).ToArray();
+        return _manualPoints.Select(ToPixelPoint).ToArray();
     }
 
     private PixelPoint ToPixelPoint(System.Windows.Point point)
     {
         var item = _viewModel.SelectedImage!;
+        var (x, y) = ImageRotation.Map(point.X / ManualDrawingCanvas.ActualWidth,
+            point.Y / ManualDrawingCanvas.ActualHeight, -item.RotationQuarterTurns);
         return new PixelPoint(
-            Math.Clamp((int)Math.Round(point.X * item.PixelWidth / ManualDrawingCanvas.ActualWidth), 0, item.PixelWidth - 1),
-            Math.Clamp((int)Math.Round(point.Y * item.PixelHeight / ManualDrawingCanvas.ActualHeight), 0, item.PixelHeight - 1));
+            Math.Clamp((int)Math.Floor(x * item.PixelWidth), 0, item.PixelWidth - 1),
+            Math.Clamp((int)Math.Floor(y * item.PixelHeight), 0, item.PixelHeight - 1));
+    }
+
+    private System.Windows.Point ToCanvasPoint(PixelPoint point)
+    {
+        var item = _viewModel.SelectedImage!;
+        var (x, y) = ImageRotation.Map((point.X + 0.5) / item.PixelWidth,
+            (point.Y + 0.5) / item.PixelHeight, item.RotationQuarterTurns);
+        return new System.Windows.Point(x * ManualDrawingCanvas.ActualWidth, y * ManualDrawingCanvas.ActualHeight);
     }
 
     private double GetBrushDiameterOnCanvas()
     {
         var item = _viewModel.SelectedImage;
         if (item is null || ManualDrawingCanvas.ActualWidth <= 0 || ManualDrawingCanvas.ActualHeight <= 0) return 10;
-        var scaleX = item.PixelWidth / ManualDrawingCanvas.ActualWidth;
-        var scaleY = item.PixelHeight / ManualDrawingCanvas.ActualHeight;
+        var scaleX = item.DisplayWidth / ManualDrawingCanvas.ActualWidth;
+        var scaleY = item.DisplayHeight / ManualDrawingCanvas.ActualHeight;
         return Math.Max(2, _viewModel.BrushDiameterPixels / ((scaleX + scaleY) / 2d));
     }
 
@@ -1219,9 +1275,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var center = new System.Windows.Point(
-            _cloneSamplePoint.Value.X * ManualDrawingCanvas.ActualWidth / item.PixelWidth,
-            _cloneSamplePoint.Value.Y * ManualDrawingCanvas.ActualHeight / item.PixelHeight);
+        var center = ToCanvasPoint(_cloneSamplePoint.Value);
         if (_isManualDrawing && activeTargetPoint is { } target)
             center += target - _manualStart;
 
@@ -1388,8 +1442,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CatalogTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e) =>
-        _viewModel.SelectTreeNode(e.NewValue as CatalogTreeNode);
+    private void CatalogTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (!_viewModel.IsLoading) _viewModel.SelectTreeNode(e.NewValue as CatalogTreeNode);
+    }
 
     private void ImageTreeContextMenu_Opened(object sender, RoutedEventArgs e)
     {
@@ -1486,6 +1542,7 @@ public partial class MainWindow : Window
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
         if (!CancelCurrentOperation()) return;
+        _viewModel.ShowLoadingCancellation();
         _viewModel.EngineStatus = "正在取消当前任务…";
     }
 

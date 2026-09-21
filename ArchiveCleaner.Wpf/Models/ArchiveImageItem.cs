@@ -61,6 +61,24 @@ public sealed class ArchiveImageItem : ObservableObject
     public double PdfWidthPoints { get; init; }
     public double PdfHeightPoints { get; init; }
     public bool IsPdfPage => !string.IsNullOrWhiteSpace(PdfSourcePath) && PdfPageNumber > 0;
+    public int RotationQuarterTurns { get; private set; }
+    public int DisplayWidth => RotationQuarterTurns % 2 == 0 ? PixelWidth : PixelHeight;
+    public int DisplayHeight => RotationQuarterTurns % 2 == 0 ? PixelHeight : PixelWidth;
+    public double DisplayDpiX => RotationQuarterTurns % 2 == 0 ? DpiX : DpiY;
+    public double DisplayDpiY => RotationQuarterTurns % 2 == 0 ? DpiY : DpiX;
+
+    public bool TryRotateClockwise()
+    {
+        if (IsPdfPage) return false;
+        RotationQuarterTurns = (RotationQuarterTurns + 1) % 4;
+        OnPropertyChanged(nameof(RotationQuarterTurns));
+        OnPropertyChanged(nameof(DisplayWidth));
+        OnPropertyChanged(nameof(DisplayHeight));
+        OnPropertyChanged(nameof(DisplayDpiX));
+        OnPropertyChanged(nameof(DisplayDpiY));
+        OnPropertyChanged(nameof(DimensionsText));
+        return true;
+    }
     public int PixelWidth { get; init; }
     public int PixelHeight { get; init; }
     public double DpiX { get; init; }
@@ -167,7 +185,7 @@ public sealed class ArchiveImageItem : ObservableObject
     public BitmapSource? RepairedPreview { get => _repairedPreview; set => SetProperty(ref _repairedPreview, value); }
     public BitmapSource? MaskPreview { get => _maskPreview; set => SetProperty(ref _maskPreview, value); }
 
-    public string DimensionsText => IsPdfPage ? $"第 {PdfPageNumber} 页 · {PixelWidth} × {PixelHeight} · {DpiX:0} DPI" : $"{PixelWidth} × {PixelHeight} · {DpiX:0} DPI";
+    public string DimensionsText => IsPdfPage ? $"第 {PdfPageNumber} 页 · {PixelWidth} × {PixelHeight} · {DpiX:0} DPI" : $"{DisplayWidth} × {DisplayHeight} · {DisplayDpiX:0} DPI";
 
     public void CopyBoundaryFrom(CleanupSettings source)
     {

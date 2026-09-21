@@ -22,6 +22,7 @@ public sealed class MainViewModel : ObservableObject
     private AppSettings _currentSettings;
     private ArchiveImageItem? _selectedImage;
     private BitmapSource? _selectedPreview;
+    private readonly Dictionary<BitmapSource, BitmapSource> _rotatedPreviews = new();
     private ReviewRegionItem? _selectedReviewRegion;
     private string _batchName = "新建批次";
     private string _engineStatus = "OpenCV 离线清理引擎就绪";
@@ -31,18 +32,24 @@ public sealed class MainViewModel : ObservableObject
     private int _processedCount;
     private int _reviewCount;
     private bool _isBusy;
+    private bool _isLoading;
+    private string _loadingMessage = string.Empty;
+    private int _loadVersion;
+    private BitmapSource? _preparedSelectionPreview;
     private bool _canCancelOperation;
     private ManualEditMode _manualEditMode;
     private Color _protectToolColor = Color.FromRgb(41, 135, 92);
     private Color _removeToolColor = Color.FromRgb(212, 71, 71);
     private Color _eraserToolColor = Color.FromRgb(89, 101, 107);
 
-    public MainViewModel()
+    public MainViewModel(bool loadSamples = true)
     {
         _currentSettings = _settingsManager.Load();
         Settings.PropertyChanged += Settings_PropertyChanged;
+#if DEBUG
         var sampleDirectory = Path.Combine(AppContext.BaseDirectory, "Files");
-        if (Directory.Exists(sampleDirectory)) LoadDirectory(sampleDirectory, replaceExisting: true);
+        if (loadSamples && Directory.Exists(sampleDirectory)) LoadDirectory(sampleDirectory, replaceExisting: true);
+#endif
     }
 
     public ObservableCollection<ArchiveImageItem> Images { get; } = [];
@@ -59,7 +66,7 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (!SetProperty(ref _selectedImage, value)) return;
-            SelectedPreview = value is null ? null : _imageCatalog.LoadPreview(value.FilePath);
+            SelectedPreview = value is null ? null : _preparedSelectionPreview ?? _imageCatalog.LoadPreview(value.FilePath);
             SelectedReviewRegion = value?.ReviewRegions.FirstOrDefault(region => !value.Decisions.ContainsKey(region.Id)) ?? value?.ReviewRegions.FirstOrDefault();
             NotifySelectedPreviewChanged();
             UpdateRiskForSelected();
@@ -68,16 +75,42 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(ReviewRegions));
             OnPropertyChanged(nameof(CanUseManualTools));
             OnPropertyChanged(nameof(CanRestoreOriginal));
+            OnPropertyChanged(nameof(CanRotateSelected));
             OnPropertyChanged(nameof(ManualCorrectionSummary));
             OnPropertyChanged(nameof(CanUndoManualEdit));
             OnPropertyChanged(nameof(CanRedoManualEdit));
         }
     }
 
-    public BitmapSource? SelectedPreview { get => _selectedPreview; private set => SetProperty(ref _selectedPreview, value); }
-    public BitmapSource? SelectedAnalysisPreview => SelectedImage?.AnalysisPreview ?? SelectedPreview;
-    public BitmapSource? SelectedRepairedPreview => SelectedImage?.RepairedPreview ?? SelectedPreview;
-    public BitmapSource? SelectedMaskPreview => SelectedImage?.MaskPreview;
+    public BitmapSource? SelectedPreview { get => RotatePreview(_selectedPreview); private set => SetProperty(ref _selectedPreview, value); }
+    public BitmapSource? SelectedAnalysisPreview => RotatePreview(SelectedImage?.AnalysisPreview ?? _selectedPreview);
+    public BitmapSource? SelectedRepairedPreview => RotatePreview(SelectedImage?.RepairedPreview ?? _selectedPreview);
+    public BitmapSource? SelectedMaskPreview => RotatePreview(SelectedImage?.MaskPreview);
+    public bool CanRotateSelected => SelectedImage is not null && !IsBusy;
+
+    private BitmapSource? RotatePreview(BitmapSource? source)
+    {
+        var turns = SelectedImage?.RotationQuarterTurns ?? 0;
+        if (source is null || turns == 0) return source;
+        if (_rotatedPreviews.TryGetValue(source, out var cached)) return cached;
+        var rotated = new TransformedBitmap(source, new RotateTransform(turns * 90));
+        rotated.Freeze();
+        _rotatedPreviews[source] = rotated;
+        return rotated;
+    }
+
+    public bool RotateSelectedClockwise()
+    {
+        if (!CanRotateSelected) return false;
+        if (!SelectedImage!.TryRotateClockwise())
+        {
+            EngineStatus = "PDF图片节点不支持旋转";
+            return false;
+        }
+        NotifySelectedPreviewChanged();
+        EngineStatus = $"当前图片已旋转至 {SelectedImage.RotationQuarterTurns * 90}°，导出将保持此方向";
+        return true;
+    }
     public ObservableCollection<ReviewRegionItem> ReviewRegions => SelectedImage?.ReviewRegions ?? [];
 
     public ReviewRegionItem? SelectedReviewRegion
@@ -106,6 +139,22 @@ public sealed class MainViewModel : ObservableObject
     public bool CanRunSelectedBatch => !IsBusy && SelectedCount > 0;
     public bool CanRestoreOriginal => !IsBusy && SelectedImage?.Analysis is not null;
     public bool CanCancelOperation { get => _canCancelOperation; private set => SetProperty(ref _canCancelOperation, value); }
+    public bool CanLoadFiles => !IsBusy;
+    public bool CanInteractWithContent => !IsLoading;
+    public bool IsLoading
+    {
+        get => _isLoading;
+        private set
+        {
+            if (SetProperty(ref _isLoading, value)) OnPropertyChanged(nameof(CanInteractWithContent));
+        }
+    }
+    public string LoadingMessage { get => _loadingMessage; private set => SetProperty(ref _loadingMessage, value); }
+
+    public void ShowLoadingCancellation()
+    {
+        if (IsLoading) LoadingMessage = "正在取消加载，等待当前文件处理结束…";
+    }
 
     public void SetOperationCancelable(bool canCancel) => CanCancelOperation = canCancel;
     public bool IsBusy
@@ -121,6 +170,8 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanRedoManualEdit));
                 OnPropertyChanged(nameof(CanRunSelectedBatch));
                 OnPropertyChanged(nameof(CanRestoreOriginal));
+                OnPropertyChanged(nameof(CanRotateSelected));
+                OnPropertyChanged(nameof(CanLoadFiles));
             }
         }
     }
@@ -192,21 +243,129 @@ public sealed class MainViewModel : ObservableObject
 
     public void AddFiles(IEnumerable<string> filePaths)
     {
-        var existingPaths = Images.Select(item => item.FilePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var standaloneRoot = TreeRoots.OfType<FolderTreeNode>().FirstOrDefault(node => node.IsVirtual);
-        foreach (var filePath in filePaths.Where(_imageCatalog.IsSupportedImage))
-        {
-            var fullPath = Path.GetFullPath(filePath);
-            if (!existingPaths.Add(fullPath)) continue;
-            var relativePath = CreateUniqueStandalonePath(fullPath);
-            var item = _imageCatalog.CreateItem(fullPath, relativePath);
-            item.CopyBoundaryFrom(Settings);
-            standaloneRoot ??= CreateStandaloneRoot();
-            Images.Add(item);
-            standaloneRoot.AddChild(new ImageTreeNode(item));
-        }
-        if (SelectedImage is null) SelectedImage = Images.FirstOrDefault();
+        var result = _imageCatalog.LoadFiles(filePaths, ExistingSources(), UsedOutputPaths());
+        AddCatalogResult(result);
+        SelectedImage ??= Images.FirstOrDefault();
         NotifyCollectionSummary();
+        EngineStatus = $"当前已加载 {Images.Count} 张图片 / PDF 页面";
+        if (result.Errors.Count > 0) throw new AggregateException("部分图片或 PDF 无法读取", result.Errors);
+    }
+
+    private HashSet<string> ExistingSources() => Images.Select(item => item.PdfSourcePath ?? item.FilePath)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private HashSet<string> UsedOutputPaths() => Images.Select(item => item.IsPdfPage
+        ? Path.GetDirectoryName(item.RelativeOutputPath)! : item.RelativeOutputPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    public Task AddFilesAsync(IEnumerable<string> filePaths, CancellationToken cancellationToken = default)
+    {
+        var paths = filePaths.ToArray();
+        var existing = ExistingSources();
+        var used = UsedOutputPaths();
+        return LoadCatalogAsync((progress, token) =>
+            [_imageCatalog.LoadFiles(paths, existing, used, progress, token)],
+            replaceExisting: false, batchName: null, "正在加载文件…", cancellationToken);
+    }
+
+    public Task LoadDirectoriesAsync(IEnumerable<string> directories, bool replaceExisting,
+        CancellationToken cancellationToken = default)
+    {
+        var roots = directories.Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (roots.Length == 0) return Task.CompletedTask;
+        var batchName = roots.Length == 1 ? new DirectoryInfo(roots[0]).Name
+            : $"{new DirectoryInfo(roots[0]).Name} 等 {roots.Length} 个文件夹";
+        return LoadCatalogAsync((progress, token) =>
+        {
+            var prefixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var results = new List<CatalogLoadResult>();
+            foreach (var root in roots)
+            {
+                token.ThrowIfCancellationRequested();
+                var prefix = roots.Length > 1 ? CreateUniqueRootPrefix(new DirectoryInfo(root).Name, prefixes) : null;
+                results.Add(_imageCatalog.LoadDirectoryTree(root, prefix, progress, token));
+            }
+            return results;
+        }, replaceExisting, batchName, "正在扫描文件夹…", cancellationToken);
+    }
+
+    private async Task LoadCatalogAsync(
+        Func<IProgress<CatalogLoadProgress>, CancellationToken, IReadOnlyList<CatalogLoadResult>> prepare,
+        bool replaceExisting, string? batchName, string initialMessage, CancellationToken cancellationToken)
+    {
+        if (IsBusy) return;
+        IsBusy = true;
+        LoadingMessage = initialMessage;
+        IsLoading = true;
+        var version = ++_loadVersion;
+        // All collection changes below resume on the caller's UI context. Only detached data is built on the worker.
+        var progress = new ThrottledCatalogProgress(new Progress<CatalogLoadProgress>(value =>
+        {
+            if (IsLoading && version == _loadVersion && !cancellationToken.IsCancellationRequested)
+                LoadingMessage = value.Message;
+        }));
+        var existingSelection = replaceExisting ? null : SelectedImage ?? Images.FirstOrDefault();
+        try
+        {
+            var prepared = await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var results = prepare(progress, cancellationToken);
+                var first = existingSelection ?? results.SelectMany(result => result.Images).FirstOrDefault();
+                BitmapSource? preview = null;
+                if (first is not null && (replaceExisting || existingSelection is null))
+                {
+                    progress.Report(new("正在准备图片预览…"));
+                    preview = _imageCatalog.LoadPreview(first.FilePath);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                return (Results: results, Preview: preview);
+            }, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            // Stop queued progress reports from overwriting completion/cancellation messages.
+            _loadVersion++;
+            LoadingMessage = "正在更新图片列表…";
+            if (replaceExisting)
+            {
+                Images.Clear();
+                TreeRoots.Clear();
+                SelectedImage = null;
+            }
+            foreach (var result in prepared.Results) AddCatalogResult(result);
+            _preparedSelectionPreview = prepared.Preview;
+            SelectedImage ??= Images.FirstOrDefault();
+            if (batchName is not null) BatchName = batchName;
+            NotifyCollectionSummary();
+            var skippedDirectories = prepared.Results.Sum(result => result.SkippedDirectoryCount);
+            var skippedFiles = prepared.Results.Sum(result => result.SkippedFileCount);
+            EngineStatus = $"已加载 {Images.Count} 张图片 / PDF 页面" +
+                (skippedDirectories + skippedFiles > 0 ? $"；跳过 {skippedDirectories} 个不可访问目录和 {skippedFiles} 个无法读取文件" : string.Empty);
+            var errors = prepared.Results.SelectMany(result => result.Errors).ToArray();
+            if (errors.Length > 0) throw new AggregateException("部分图片或 PDF 无法读取", errors);
+        }
+        catch (OperationCanceledException)
+        {
+            EngineStatus = "已取消加载，保留原来的图片列表";
+            throw;
+        }
+        finally
+        {
+            _preparedSelectionPreview = null;
+            IsLoading = false;
+            IsBusy = false;
+        }
+    }
+
+    private sealed class ThrottledCatalogProgress(IProgress<CatalogLoadProgress> target) : IProgress<CatalogLoadProgress>
+    {
+        private long _lastReport;
+        public void Report(CatalogLoadProgress value)
+        {
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastReport != 0 && System.Diagnostics.Stopwatch.GetElapsedTime(_lastReport, now).TotalMilliseconds < 50) return;
+            _lastReport = now;
+            target.Report(value);
+        }
     }
 
     public void LoadDirectory(string directory, bool replaceExisting)
@@ -218,17 +377,7 @@ public sealed class MainViewModel : ObservableObject
             SelectedImage = null;
         }
         var result = _imageCatalog.LoadDirectoryTree(directory);
-        if (result.Root is not null)
-        {
-            TreeRoots.Add(result.Root);
-            SubscribeToRoot(result.Root);
-        }
-        foreach (var image in result.Images)
-            if (!Images.Any(existing => existing.FilePath.Equals(image.FilePath, StringComparison.OrdinalIgnoreCase)))
-            {
-                image.CopyBoundaryFrom(Settings);
-                Images.Add(image);
-            }
+        AddCatalogResult(result);
         SelectedImage ??= Images.FirstOrDefault();
         BatchName = new DirectoryInfo(directory).Name;
         EngineStatus = $"已递归加载 {Images.Count} 张图片" +
@@ -262,17 +411,7 @@ public sealed class MainViewModel : ObservableObject
                 ? CreateUniqueRootPrefix(new DirectoryInfo(rootPath).Name, usedPrefixes)
                 : null;
             var result = _imageCatalog.LoadDirectoryTree(rootPath, prefix);
-            if (result.Root is not null)
-            {
-                TreeRoots.Add(result.Root);
-                SubscribeToRoot(result.Root);
-            }
-            foreach (var image in result.Images)
-                if (!Images.Any(existing => existing.FilePath.Equals(image.FilePath, StringComparison.OrdinalIgnoreCase)))
-                {
-                    image.CopyBoundaryFrom(Settings);
-                    Images.Add(image);
-                }
+            AddCatalogResult(result);
             skippedDirectories += result.SkippedDirectoryCount;
             skippedFiles += result.SkippedFileCount;
         }
@@ -288,18 +427,50 @@ public sealed class MainViewModel : ObservableObject
         NotifyCollectionSummary();
     }
 
+    private void AddCatalogResult(CatalogLoadResult result)
+    {
+        if (result.Root is null) return;
+        // PDF identity belongs to its source and page number, not the rendered cache path.
+        static string Identity(ArchiveImageItem item) => item.IsPdfPage
+            ? $"{item.PdfSourcePath}|{item.PdfPageNumber}"
+            : item.FilePath;
+        var existingPaths = Images.Select(Identity).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var duplicates = result.Images.Where(item => !existingPaths.Add(Identity(item))).ToHashSet();
+        RemoveImagesRecursive(result.Root, duplicates);
+        if (result.Root.ImageCount == 0) return;
+        foreach (var image in result.Images.Where(item => !duplicates.Contains(item)))
+        {
+            image.CopyBoundaryFrom(Settings);
+            Images.Add(image);
+        }
+        var standalone = result.Root.FullPath == "standalone://images"
+            ? TreeRoots.OfType<FolderTreeNode>().FirstOrDefault(root => root.FullPath == result.Root.FullPath)
+            : null;
+        if (standalone is not null)
+        {
+            foreach (var child in result.Root.Children.ToArray()) standalone.AddChild(child);
+            standalone.RaiseContentSummaryChanged();
+        }
+        else
+        {
+            TreeRoots.Add(result.Root);
+            SubscribeToRoot(result.Root);
+        }
+    }
+
     public void InitializeImageBoundariesFromDefaults()
     {
         foreach (var item in Images) item.CopyBoundaryFrom(Settings);
         if (SelectedImage is not null) OnPropertyChanged(nameof(SelectedImage));
     }
 
-    public bool ApplySelectedBoundaryToAll()
+    public bool ApplySelectedBoundaryToChecked()
     {
         var source = SelectedImage;
-        if (source is null || Images.Count == 0) return false;
+        var checkedImages = GetSelectedImages();
+        if (source is null || checkedImages.Count == 0) return false;
         source.CopyBoundaryTo(Settings);
-        foreach (var item in Images) item.CopyBoundaryFrom(source);
+        foreach (var item in checkedImages) item.CopyBoundaryFrom(source);
         OnPropertyChanged(nameof(SelectedImage));
         return true;
     }
@@ -813,7 +984,9 @@ public sealed class MainViewModel : ObservableObject
             {
                 SourceFiles = selectedItems.Select(item => item.FilePath).ToArray(), OutputDirectory = OutputDirectory,
                 Settings = settings, DecisionsByFile = decisions, CloneStampsByFile = cloneStamps,
-                RelativeOutputPathsByFile = relativeOutputPaths, SettingsByFile = settingsByFile
+                RelativeOutputPathsByFile = relativeOutputPaths, SettingsByFile = settingsByFile,
+                RotationByFile = selectedItems.ToDictionary(item => item.FilePath,
+                    item => item.IsPdfPage ? 0 : item.RotationQuarterTurns, StringComparer.OrdinalIgnoreCase)
             }, progress, cancellationToken);
             EngineStatus = $"批量处理完成：成功 {report.SuccessCount}，失败 {report.FailedCount}";
             ProgressPercent = 100;
@@ -922,6 +1095,8 @@ public sealed class MainViewModel : ObservableObject
 
     private void NotifySelectedPreviewChanged()
     {
+        _rotatedPreviews.Clear();
+        OnPropertyChanged(nameof(SelectedPreview));
         OnPropertyChanged(nameof(SelectedAnalysisPreview));
         OnPropertyChanged(nameof(SelectedRepairedPreview));
         OnPropertyChanged(nameof(SelectedMaskPreview));
@@ -1010,14 +1185,6 @@ public sealed class MainViewModel : ObservableObject
 
     private static long CountActive(byte[]? pixels) => pixels?.LongCount(value => value != 0) ?? 0;
 
-    private FolderTreeNode CreateStandaloneRoot()
-    {
-        var root = new FolderTreeNode("单独添加", "standalone://images", isVirtual: true);
-        TreeRoots.Add(root);
-        SubscribeToRoot(root);
-        return root;
-    }
-
     private void SubscribeToRoot(CatalogTreeNode root) => root.CheckedStateChanged += TreeRoot_CheckedStateChanged;
 
     private void Settings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -1081,22 +1248,6 @@ public sealed class MainViewModel : ObservableObject
     private static void OnFolderContentsChanged(FolderTreeNode folder)
     {
         folder.RaiseContentSummaryChanged();
-    }
-
-    private string CreateUniqueStandalonePath(string filePath)
-    {
-        var parentName = new DirectoryInfo(Path.GetDirectoryName(filePath) ?? string.Empty).Name;
-        var directory = Path.Combine("单独添加", string.IsNullOrWhiteSpace(parentName) ? "未分组" : parentName);
-        var candidate = Path.Combine(directory, Path.GetFileName(filePath));
-        var used = Images.Select(item => item.RelativeOutputPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (!used.Contains(candidate)) return candidate;
-        var stem = Path.GetFileNameWithoutExtension(filePath);
-        var extension = Path.GetExtension(filePath);
-        for (var suffix = 2; ; suffix++)
-        {
-            candidate = Path.Combine(directory, $"{stem}_{suffix}{extension}");
-            if (!used.Contains(candidate)) return candidate;
-        }
     }
 
     private static string CreateUniqueRootPrefix(string rootName, HashSet<string> usedPrefixes)

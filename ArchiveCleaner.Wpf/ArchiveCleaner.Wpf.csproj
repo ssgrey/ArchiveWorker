@@ -15,12 +15,14 @@
     <ProjectReference Include="..\ArchiveCleaner.Core\ArchiveCleaner.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
     <Content Include="..\Files\*.jpg" Link="Files\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </Content>
     <Content Include="..\Files\*.pdf" Link="Files\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 

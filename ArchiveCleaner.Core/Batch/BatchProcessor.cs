@@ -18,6 +18,7 @@ public sealed class BatchRequest
     public required IReadOnlyList<string> SourceFiles { get; init; }
     public required string OutputDirectory { get; init; }
     public required CleanupSettingsSnapshot Settings { get; init; }
+    public IReadOnlyDictionary<string, int> RotationByFile { get; init; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, CleanupSettingsSnapshot> SettingsByFile { get; init; } = new Dictionary<string, CleanupSettingsSnapshot>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, string> RelativeOutputPathsByFile { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, ReviewDecisionSet> DecisionsByFile { get; init; } = new Dictionary<string, ReviewDecisionSet>(StringComparer.OrdinalIgnoreCase);
@@ -112,7 +113,9 @@ public sealed class BatchProcessor
             if (batch.CloneStampsByFile.TryGetValue(Path.GetFullPath(sourcePath), out var cloneStamps))
                 foreach (var stamp in cloneStamps) ManualPixelEditor.ApplyChange(repair.RepairedImage.Pixels, stamp, useAfter: true);
             batch.RelativeOutputPathsByFile.TryGetValue(Path.GetFullPath(sourcePath), out var relativeOutputPath);
-            var written = _writer.Write(repair.RepairedImage, sourcePath, batch.OutputDirectory, batch.Settings, relativeOutputPath);
+            batch.RotationByFile.TryGetValue(fullSourcePath, out var rotation);
+            var outputImage = ImageRotation.Apply(repair.RepairedImage, rotation);
+            var written = _writer.Write(outputImage, sourcePath, batch.OutputDirectory, batch.Settings, relativeOutputPath);
             stopwatch.Stop();
             return new PageAuditRecord
             {

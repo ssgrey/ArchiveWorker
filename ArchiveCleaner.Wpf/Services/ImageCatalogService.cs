@@ -15,7 +15,8 @@ public sealed class ImageCatalogService
     };
     private readonly PdfPageService _pdfPages = new();
 
-    public CatalogLoadResult LoadDirectoryTree(string directory, string? relativeOutputPrefix = null)
+    public CatalogLoadResult LoadDirectoryTree(string directory, string? relativeOutputPrefix = null,
+        IProgress<CatalogLoadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var fullRoot = Path.GetFullPath(directory);
         if (!Directory.Exists(fullRoot)) return new CatalogLoadResult(null, [], 0, 0);
@@ -23,7 +24,7 @@ public sealed class ImageCatalogService
         var skippedDirectories = 0;
         var skippedFiles = 0;
         var root = BuildFolder(fullRoot, fullRoot, images, ref skippedDirectories, ref skippedFiles,
-            includeEmptyRoot: true, relativeOutputPrefix);
+            includeEmptyRoot: true, relativeOutputPrefix, progress, cancellationToken);
         return new CatalogLoadResult(root?.Children.Count > 0 ? root : null, images, skippedDirectories, skippedFiles);
     }
 
@@ -45,18 +46,23 @@ public sealed class ImageCatalogService
     }
 
     private FolderTreeNode? BuildFolder(string directory, string root, List<ArchiveImageItem> images,
-        ref int skippedDirectories, ref int skippedFiles, bool includeEmptyRoot = false, string? relativeOutputPrefix = null)
+        ref int skippedDirectories, ref int skippedFiles, bool includeEmptyRoot = false, string? relativeOutputPrefix = null,
+        IProgress<CatalogLoadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Report(new($"正在扫描文件夹：{directory}"));
         var folder = new FolderTreeNode(new DirectoryInfo(directory).Name, directory);
         string[] files;
         string[] directories;
         try
         {
             files = Directory.EnumerateFiles(directory)
+                .Select(path => { cancellationToken.ThrowIfCancellationRequested(); return path; })
                 .Where(IsSupportedFile)
                 .OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
             directories = Directory.EnumerateDirectories(directory)
+                .Select(path => { cancellationToken.ThrowIfCancellationRequested(); return path; })
                 .Where(path => !IsReparsePoint(path))
                 .OrderBy(Path.GetFileName, StringComparer.CurrentCultureIgnoreCase)
                 .ToArray();
@@ -74,6 +80,8 @@ public sealed class ImageCatalogService
 
         foreach (var file in files)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new($"正在加载：{Path.GetFileName(file)} · 已读取 {images.Count} 张图片 / 页面"));
             try
             {
                 var relativePath = Path.GetRelativePath(root, file);
@@ -82,11 +90,9 @@ public sealed class ImageCatalogService
                 if (IsPdf(file))
                 {
                     var pdfFolder = new FolderTreeNode(Path.GetFileName(file), file, isVirtual: true);
-                    var pages = _pdfPages.GetPages(file);
-                    foreach (var page in pages)
+                    var pages = CreatePdfPages(file, relativePath, progress, cancellationToken);
+                    foreach (var item in pages)
                     {
-                        var rendered = _pdfPages.RenderPageToFile(file, page.PageNumber);
-                        var item = CreatePdfPageItem(file, page, rendered, Path.Combine(relativePath, $"第{page.PageNumber:000}页.png"));
                         images.Add(item);
                         pdfFolder.AddChild(new ImageTreeNode(item));
                     }
@@ -100,7 +106,7 @@ public sealed class ImageCatalogService
                 }
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or
-                                               InvalidDataException or InvalidOperationException or System.Runtime.InteropServices.ExternalException or ArgumentException or FormatException)
+                                               InvalidDataException or InvalidOperationException or System.Runtime.InteropServices.ExternalException or ArgumentException or FormatException or PDFtoImage.Exceptions.PdfException)
             {
                 skippedFiles++;
             }
@@ -109,7 +115,7 @@ public sealed class ImageCatalogService
         foreach (var childDirectory in directories)
         {
             var child = BuildFolder(childDirectory, root, images, ref skippedDirectories, ref skippedFiles,
-                relativeOutputPrefix: relativeOutputPrefix);
+                relativeOutputPrefix: relativeOutputPrefix, progress: progress, cancellationToken: cancellationToken);
             if (child is not null) folder.AddChild(child);
         }
 
@@ -136,14 +142,73 @@ public sealed class ImageCatalogService
 
     public BitmapSource LoadPreview(ArchiveImageItem item) => LoadPreview(item.FilePath);
 
-    public IReadOnlyList<ArchiveImageItem> CreatePdfPages(string pdfPath, string relativeOutputPrefix)
+    public IReadOnlyList<ArchiveImageItem> CreatePdfPages(string pdfPath, string relativeOutputPrefix,
+        IProgress<CatalogLoadProgress>? progress = null, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var pages = _pdfPages.GetPages(pdfPath);
-        return pages.Select(page => CreatePdfPageItem(
-            pdfPath,
-            page,
-            _pdfPages.RenderPageToFile(pdfPath, page.PageNumber),
-            Path.Combine(relativeOutputPrefix, $"第{page.PageNumber:000}页.png"))).ToArray();
+        var items = new List<ArchiveImageItem>(pages.Count);
+        foreach (var page in pages)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new($"正在加载 {Path.GetFileName(pdfPath)}，第 {page.PageNumber} / {pages.Count} 页"));
+            var rendered = _pdfPages.RenderPageToFile(pdfPath, page.PageNumber);
+            cancellationToken.ThrowIfCancellationRequested();
+            items.Add(CreatePdfPageItem(pdfPath, page, rendered,
+                Path.Combine(relativeOutputPrefix, $"第{page.PageNumber:000}页.png")));
+        }
+        return items;
+    }
+
+    public CatalogLoadResult LoadFiles(IEnumerable<string> filePaths, HashSet<string> existingSources,
+        HashSet<string> usedOutputPaths, IProgress<CatalogLoadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var root = new FolderTreeNode("单独添加", "standalone://images", isVirtual: true);
+        var images = new List<ArchiveImageItem>();
+        var errors = new List<Exception>();
+        var files = filePaths.Where(IsSupportedFile).ToArray();
+        for (var index = 0; index < files.Length; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var filePath = files[index];
+            progress?.Report(new($"正在加载文件 {index + 1} / {files.Length}：{Path.GetFileName(filePath)}"));
+            try
+            {
+                var fullPath = Path.GetFullPath(filePath);
+                if (existingSources.Contains(fullPath)) continue;
+                var parentName = new DirectoryInfo(Path.GetDirectoryName(fullPath)!).Name;
+                var outputDirectory = Path.Combine("单独添加", string.IsNullOrWhiteSpace(parentName) ? "未分组" : parentName);
+                var relativePath = Path.Combine(outputDirectory, Path.GetFileName(fullPath));
+                for (var suffix = 2; usedOutputPaths.Contains(relativePath); suffix++)
+                    relativePath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(fullPath)}_{suffix}{Path.GetExtension(fullPath)}");
+                var items = IsSupportedImage(fullPath)
+                    ? new[] { CreateItem(fullPath, relativePath) }
+                    : CreatePdfPages(fullPath, relativePath, progress, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                var parent = root;
+                if (IsPdf(fullPath))
+                {
+                    parent = new FolderTreeNode(Path.GetFileName(fullPath), fullPath, isVirtual: true);
+                    root.AddChild(parent);
+                }
+                foreach (var item in items)
+                {
+                    images.Add(item);
+                    parent.AddChild(new ImageTreeNode(item));
+                }
+                existingSources.Add(fullPath);
+                usedOutputPaths.Add(relativePath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or
+                InvalidDataException or InvalidOperationException or System.Runtime.InteropServices.ExternalException or ArgumentException or FormatException or PDFtoImage.Exceptions.PdfException)
+            {
+                errors.Add(new IOException($"{Path.GetFileName(filePath)}：{exception.Message}", exception));
+            }
+            progress?.Report(new($"已读取 {index + 1} / {files.Length} 个文件"));
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return new CatalogLoadResult(root.ImageCount > 0 ? root : null, images, 0, errors.Count) { Errors = errors };
     }
 
     private ArchiveImageItem CreatePdfPageItem(string pdfPath, PdfPageInfo page, string renderedPath, string relativeOutputPath) => new()
@@ -187,4 +252,9 @@ public sealed class ImageCatalogService
 }
 
 public sealed record CatalogLoadResult(FolderTreeNode? Root, IReadOnlyList<ArchiveImageItem> Images,
-    int SkippedDirectoryCount, int SkippedFileCount);
+    int SkippedDirectoryCount, int SkippedFileCount)
+{
+    public IReadOnlyList<Exception> Errors { get; init; } = [];
+}
+
+public sealed record CatalogLoadProgress(string Message);
